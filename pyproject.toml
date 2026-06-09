@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aeropredict"
+description = "TFM: Predicción de trayectorias de vuelo con datos de OpenSky Network"
+version = "0.1.0"
+authors = [
+    {name = "TFM Student"},
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8",
+    "deltalake>=0.20",
+    "python-dotenv>=1",
+    "pyarrow>=15",
+    "requests>=2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+]
+ml = [
+    "scikit-learn>=1.4",
+    "numpy>=1.26",
+    "pandas>=2",
+]
+viz = [
+    "matplotlib>=3",
+    "seaborn>=0.13",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".conda", "data", "__pycache__", "*.egg-info"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+    "N",   # naming conventions
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["I001"]  # permitir imports sin ordenar en __init__
+
+[project.scripts]
+aeropredict = "aeropredict.opensky.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
