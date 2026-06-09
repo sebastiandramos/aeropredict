@@ -1,2 +1,0 @@
-Créditos insuficientes: -1 remaining (mínimo 2000). Retry after: 36177s. Reset estimado: 2026-06-08T19:07:05.569543+00:00
-can_extract(2000) = ok=False, remaining=-1, retry_after=36177
