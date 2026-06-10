@@ -18,8 +18,8 @@ from typing import Any
 
 import pyarrow as pa
 
-from .client import OpenSkyClient
-from .config import AEROPUERTOS, get_client_id, get_client_secret, get_delta_root
+from .client_pool import ClientPool
+from .config import AEROPUERTOS, get_all_credentials, get_delta_root
 from .credit_checker import can_extract
 from .extract_flights import fetch_arrivals_raw, fetch_departures_raw, parse_flight_list
 from .logging_config import setup_daily_logger
@@ -35,8 +35,8 @@ SPANISH_AIRPORT_CODES: list[str] = [
     code for code, _name, _city, country in AEROPUERTOS if country == "España"
 ]
 
-# Umbral mínimo de créditos para empezar una extracción
-MIN_CREDITS = 2000
+# Umbral mínimo de créditos — 0 para consumir hasta el último crédito
+MIN_CREDITS = 0
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -177,6 +177,14 @@ def _extract_day(
             if "404" in err_msg:
                 logger.info("  %s: sin datos en el rango", apt)
                 total_airports += 1  # contar como procesado
+            elif "429" in err_msg or "rate limited" in err_msg:
+                logger.warning(
+                    "  %s: créditos agotados (%s). Deteniendo extracción.",
+                    apt,
+                    "429" if "429" in err_msg else "pool exhausto",
+                )
+                errors.append({"airport": apt, "error": err_msg})
+                break  # salir del bucle, créditos agotados
             else:
                 logger.warning("  %s: error: %s", apt, err_msg)
                 errors.append({"airport": apt, "error": err_msg})
@@ -193,22 +201,78 @@ def _extract_day(
 
 
 def _check_credits_and_exit() -> bool:
-    """Verifica créditos. Si insuficientes, loggea info y retorna False."""
-    ok, info = can_extract(min_required=MIN_CREDITS)
-    if not ok:
-        retry = info.get("retry_after")
-        reset = info.get("reset_at")
-        remaining = info.get("remaining", "?")
-        logger.warning(
-            "Créditos insuficientes: %s remaining. "
-            "Siguiente ventana estimada: %s "
-            "(retry after: %ss)",
-            remaining,
-            reset.isoformat() if reset else "?",
-            retry or "?",
-        )
-        return False
+    """Verifica créditos y loggea info. Nunca bloquea la extracción."""
+    _, info = can_extract(min_required=MIN_CREDITS)
+    remaining = info.get("remaining", "?")
+    retry = info.get("retry_after")
+    reset = info.get("reset_at")
+    logger.info(
+        "Créditos OpenSky: %s remaining. Ventana: %s (retry after: %ss)",
+        remaining,
+        reset.isoformat() if reset else "?",
+        retry or "?",
+    )
     return True
+
+
+def _fill_gaps(client: Any, delta_root: str, max_lookback: int = 30) -> int:
+    """Rellena huecos históricos con créditos sobrantes tras la extracción diaria.
+
+    Escanea desde D-3 hacia atrás buscando fechas con aeropuertos españoles
+    pendientes de cargar. Procesa lo que falta hasta agotar créditos (429)
+    o cubrir todo el histórico.
+
+    Returns:
+        Número total de vuelos rellenados.
+    """
+    now_utc = datetime.now(UTC)
+    filled = 0
+    days_checked = 0
+
+    for offset in range(3, max_lookback + 1):
+        target_date = (now_utc - timedelta(days=offset)).date()
+
+        ok, info = can_extract(min_required=60)
+        if not ok:
+            logger.info(
+                "Relleno de huecos: créditos insuficientes (%s). Parando.",
+                info.get("remaining", "?"),
+            )
+            break
+
+        existing = _get_existing_airports_for_day(delta_root, target_date)
+        missing = [a for a in SPANISH_AIRPORT_CODES if a not in existing]
+        if not missing:
+            continue
+
+        days_checked += 1
+        logger.info(
+            "--- Rellenando hueco: %s (D-%d) — %d aeropuertos pendientes ---",
+            target_date, offset, len(missing),
+        )
+
+        result = _extract_day(client, target_date, dry_run=False, delta_root=delta_root)
+        filled += result["flights"]
+
+        if result["errors"]:
+            for err in result["errors"]:
+                err_text = err.get("error", "")
+                if "429" in err_text or "rate limited" in err_text:
+                    logger.info(
+                        "Créditos agotados durante relleno de huecos. "
+                        "Detenido en %s después de %d días y %d vuelos.",
+                        target_date, days_checked, filled,
+                    )
+                    return filled
+
+        time.sleep(2)
+
+    if days_checked:
+        logger.info(
+            "Relleno de huecos completado: %d días escaneados, %d vuelos añadidos",
+            days_checked, filled,
+        )
+    return filled
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,13 +294,26 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Delta root: %s", delta_root)
     logger.info("=" * 60)
 
-    # Crear cliente (solo si no es dry-run)
-    client: OpenSkyClient | None = None
+    # Crear pool de clientes (solo si no es dry-run)
+    client: ClientPool | None = None
     if not args.dry_run:
-        # Verificar créditos
-        if not _check_credits_and_exit():
+        _check_credits_and_exit()
+        creds = get_all_credentials()
+        if not creds:
+            logger.error(
+                "No hay credenciales OpenSky configuradas. "
+                "Usa `doppler run` o define OPENSKY_CLIENT_ID* en .env",
+            )
             return 1
-        client = OpenSkyClient(get_client_id(), get_client_secret())
+        client = ClientPool(creds)
+        logger.info(
+            "Pool creado con %d cuentas: %s",
+            client.account_count,
+            [client.current_name],  # nombre de la activa inicial
+        )
+        # Log de todas las cuentas disponibles
+        for cred in creds:
+            logger.info("  Cuenta disponible: %s (%s)", cred.get("name", "?"), cred["id"])
 
     start_time = time.time()
     total_summary: dict[str, Any] = {
@@ -267,6 +344,11 @@ def main(argv: list[str] | None = None) -> int:
         total_summary["days_done"] += 1
         total_summary["errors"].extend(result["errors"])
 
+    # Rellenar huecos históricos con créditos sobrantes
+    gap_filled = 0
+    if not args.dry_run and total_summary["days_done"] > 0:
+        gap_filled = _fill_gaps(client, delta_root)
+
     elapsed = time.time() - start_time
 
     # Resumen final
@@ -277,13 +359,15 @@ def main(argv: list[str] | None = None) -> int:
             args.days,
         )
     else:
-        logger.info(
-            "EXTRACCIÓN COMPLETADA: %d días, %d vuelos de %d aeropuertos en %.1fs",
-            total_summary["days_done"],
-            total_summary["total_flights"],
-            total_summary["total_airports"],
-            elapsed,
-        )
+        parts = [
+            f"{total_summary['days_done']} días, "
+            f"{total_summary['total_flights']} vuelos de "
+            f"{total_summary['total_airports']} aeropuertos",
+        ]
+        if gap_filled:
+            parts.append(f"({gap_filled} de relleno histórico)")
+        parts.append(f"{elapsed:.1f}s")
+        logger.info("EXTRACCIÓN COMPLETADA: %s", " | ".join(parts))
         if total_summary["errors"]:
             logger.warning(
                 "Errores: %d aeropuertos con fallos",

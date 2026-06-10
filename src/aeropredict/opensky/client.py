@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://opensky-network.org/api"
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0  # segundos entre reintentos
+MAX_RETRY_AFTER = 60  # tope para Retry-After (evitar esperas de horas)
 
 
 class OpenSkyClient:
@@ -145,17 +146,12 @@ class OpenSkyClient:
 
 
 def _parse_retry_after(resp: requests.Response) -> float:
-    """Lee la cabecera Retry-After de una respuesta 429."""
-    val = resp.headers.get("X-Rate-Limit-Retry-After-Seconds")
-    if val is not None:
-        try:
-            return float(val)
-        except ValueError:
-            pass
-    val = resp.headers.get("Retry-After")
-    if val is not None:
-        try:
-            return float(val)
-        except ValueError:
-            pass
-    return 60.0  # valor por defecto conservador
+    """Lee y acota la cabecera Retry-After de una respuesta 429."""
+    for header in ("X-Rate-Limit-Retry-After-Seconds", "Retry-After"):
+        val = resp.headers.get(header)
+        if val is not None:
+            try:
+                return min(float(val), MAX_RETRY_AFTER)
+            except ValueError:
+                pass
+    return 60.0

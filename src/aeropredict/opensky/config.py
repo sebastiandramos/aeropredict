@@ -1,6 +1,8 @@
 """Configuración global del módulo opensky.
 
-Las variables de entorno se cargan desde .env si existe.
+Las variables de entorno se cargan desde:
+1. Doppler (vía `doppler run`) — prioridad máxima
+2. .env si existe — fallback local
 """
 
 from __future__ import annotations
@@ -10,7 +12,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# No sobrescribe vars ya definidas (Doppler inyecta antes, .env es solo fallback)
+load_dotenv(override=False)
 
 # ---------------------------------------------------------------------------
 # Bounding boxes predefinidos
@@ -116,6 +119,48 @@ def get_client_id() -> str:
 
 def get_client_secret() -> str:
     return os.environ.get("OPENSKY_CLIENT_SECRET", "")
+
+
+def get_all_credentials() -> list[dict[str, str]]:
+    """Descubre todas las cuentas OpenSky configuradas en el entorno.
+
+    Busca variables con el patrón::
+
+        OPENSKY_CLIENT_ID_{NOMBRE}
+        OPENSKY_CLIENT_SECRET_{NOMBRE}
+
+    También reconoce ``OPENSKY_CLIENT_ID`` / ``OPENSKY_CLIENT_SECRET``
+    (sin sufijo) como cuenta ``default``.
+
+    Returns:
+        Lista de dicts con clave ``name``, ``id``, ``secret``.
+    """
+    accounts: list[dict[str, str]] = []
+
+    # Cuenta primaria sin sufijo (compatibilidad hacia atrás)
+    cid = os.environ.get("OPENSKY_CLIENT_ID")
+    secret = os.environ.get("OPENSKY_CLIENT_SECRET")
+    if cid and secret:
+        accounts.append({"name": "default", "id": cid, "secret": secret})
+
+    # Cuentas con nombre: OPENSKY_CLIENT_ID_{NAME}
+    prefix = "OPENSKY_CLIENT_ID_"
+    for key, value in os.environ.items():
+        if key.startswith(prefix):
+            name = key.removeprefix(prefix)
+            secret_key = f"OPENSKY_CLIENT_SECRET_{name}"
+            s = os.environ.get(secret_key)
+            if s and not _already_registered(accounts, value, s):
+                accounts.append({"name": name, "id": value, "secret": s})
+
+    return accounts
+
+
+def _already_registered(
+    accounts: list[dict[str, str]], cid: str, secret: str
+) -> bool:
+    """Evita duplicados cuando la cuenta sin sufijo coincide con una nombrada."""
+    return any(a["id"] == cid and a["secret"] == secret for a in accounts)
 
 
 def get_delta_root() -> str:
