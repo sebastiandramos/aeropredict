@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # type: ignore[import]
 
 # No sobrescribe vars ya definidas (Doppler inyecta antes, .env es solo fallback)
 load_dotenv(override=False)
@@ -163,6 +163,133 @@ def _already_registered(
     return any(a["id"] == cid and a["secret"] == secret for a in accounts)
 
 
+def get_storage_options() -> dict[str, str] | None:
+    """Configuración para almacenamiento remoto Delta Lake.
+
+    Soporta dos backends:
+
+    **Azure Blob Storage / ADLS Gen2** (prioridad máxima)
+    Variables requeridas:
+      - ``AZURE_STORAGE_ACCOUNT_NAME``
+      - ``AZURE_STORAGE_ACCESS_KEY`` (o ``AZURE_STORAGE_SAS_TOKEN``)
+    URI esperada en ``OPENSKY_DELTA_ROOT``:
+      ``abfss://<container>@<account>.dfs.core.windows.net``
+
+    **S3-compatible** (Cloudflare R2, MinIO, Scaleway…)
+    Variables requeridas:
+      - ``S3_ENDPOINT_URL``
+      - ``S3_ACCESS_KEY_ID`` / ``S3_SECRET_ACCESS_KEY``
+
+    Si no hay ninguna configurada, devuelve ``None`` (modo almacenamiento local).
+    """
+    # --- Prioridad 1: Azure ---
+    account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+    access_key = os.environ.get("AZURE_STORAGE_ACCESS_KEY")
+    sas_token = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
+    if account and (access_key or sas_token):
+        opts: dict[str, str] = {"AZURE_STORAGE_ACCOUNT_NAME": account}
+        if access_key:
+            opts["AZURE_STORAGE_ACCESS_KEY"] = access_key
+        if sas_token:
+            opts["AZURE_STORAGE_SAS_TOKEN"] = sas_token
+        return opts
+
+    # --- Prioridad 2: S3 ---
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+    if endpoint:
+        return {
+            "AWS_ENDPOINT_URL": endpoint,
+            "AWS_ACCESS_KEY_ID": os.environ.get("S3_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": "auto",
+            "aws_conditional_put": "etag",
+        }
+
+    return None
+
+
+def get_mongo_uri() -> str:
+    """URI de conexión a MongoDB para la capa silver.
+
+    Por defecto apunta al contenedor Docker local.
+    """
+    return os.environ.get("MONGODB_URI", "mongodb://localhost:27017/aeropredict")
+
+
+def get_postgres_uri() -> str:
+    """URI de conexión a PostgreSQL para la capa gold.
+
+    Por defecto apunta al contenedor Docker local.
+    """
+    return os.environ.get(
+        "POSTGRES_URI",
+        "postgresql://aeropredict:aeropredict@localhost:5432/aeropredict",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Configuración de fuentes externas (schedules, weather, aircraft)
+# ---------------------------------------------------------------------------
+
+
+def get_aviationstack_api_key() -> str:
+    """API key de AviationStack (free tier: 100 req/mes)."""
+    return os.environ.get("AVIATIONSTACK_API_KEY", "")
+
+
+def get_aviationstack_keys() -> list[str]:
+    """Descubre todas las AviationStack API keys con patrón de sufijo.
+
+    Busca ``AVIATIONSTACK_API_KEY_{NAME}`` además de la variable base.
+    Útil para Pool rotation entre múltiples cuentas.
+    """
+    keys: list[str] = []
+    base = os.environ.get("AVIATIONSTACK_API_KEY")
+    if base:
+        keys.append(base)
+    prefix = "AVIATIONSTACK_API_KEY_"
+    for key, value in os.environ.items():
+        if key.startswith(prefix) and value and value not in keys:
+            keys.append(value)
+    return keys
+
+
+def get_aerodatabox_key() -> str:
+    """API key de AeroDataBox (via RapidAPI / API.Market).
+
+    Busca AERODATABOX_API_KEY primero, luego AERODATABOX_TOKEN_PABLO,
+    y finalmente cualquier AERODATABOX_TOKEN_* como fallback.
+    """
+    key = os.environ.get("AERODATABOX_API_KEY", "")
+    if key:
+        return key
+    # Fallback: suffixed token (e.g. AERODATABOX_TOKEN_PABLO)
+    for env_name, val in os.environ.items():
+        if env_name.startswith("AERODATABOX_TOKEN_") and val.strip():
+            return val.strip()
+    return ""
+
+
+def get_aerodatabox_keys() -> list[str]:
+    """Todas las API keys de AeroDataBox disponibles (para Pool rotation)."""
+    keys = []
+    seen = set()
+    primary = get_aerodatabox_key()
+    if primary:
+        keys.append(primary)
+        seen.add(primary)
+    for env_name, val in os.environ.items():
+        if env_name.startswith("AERODATABOX_TOKEN_") and val.strip() and val.strip() not in seen:
+            keys.append(val.strip())
+            seen.add(val.strip())
+    return keys
+
+
+def get_opensky_aircraft_db_path() -> str:
+    """Ruta al archivo CSV de la base de datos de aeronaves de OpenSky."""
+    return os.environ.get("OPENSKY_AIRCRAFT_DB_PATH", "data/aircraft_db.csv")
+
+
 def get_delta_root() -> str:
     """Ruta base para tablas Delta. Por defecto data/raw/."""
     return os.environ.get("OPENSKY_DELTA_ROOT", "data/raw")
@@ -170,11 +297,11 @@ def get_delta_root() -> str:
 
 def get_bbox() -> BoundingBox:
     """Bounding box desde variables de entorno o el de España por defecto."""
-    lamin = os.environ.get("OPENSKY_BBOX_LAMIN")
-    lamax = os.environ.get("OPENSKY_BBOX_LAMAX")
-    lomin = os.environ.get("OPENSKY_BBOX_LOMIN")
-    lomax = os.environ.get("OPENSKY_BBOX_LOMAX")
-    if all(v is not None for v in (lamin, lamax, lomin, lomax)):
+    lamin: str | None = os.environ.get("OPENSKY_BBOX_LAMIN")
+    lamax: str | None = os.environ.get("OPENSKY_BBOX_LAMAX")
+    lomin: str | None = os.environ.get("OPENSKY_BBOX_LOMIN")
+    lomax: str | None = os.environ.get("OPENSKY_BBOX_LOMAX")
+    if lamin is not None and lamax is not None and lomin is not None and lomax is not None:
         return BoundingBox(
             lamin=float(lamin),
             lamax=float(lamax),
