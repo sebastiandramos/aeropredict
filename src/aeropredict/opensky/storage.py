@@ -404,3 +404,78 @@ def write_tracks_silver(tracks: list[Track], base_path: str) -> int:
     n = _write_silver(table_uri, rows, TRACK_SCHEMA, ["track_date"])
     logger.info("Silver: %d waypoints en %s", n, table_uri)
     return n
+
+
+# ===================================================================
+# SYSTEM — Cache de consultas para evitar trabajo repetido
+# ===================================================================
+
+EMPTY_CACHE_SCHEMA = pa.schema([
+    pa.field("airport_code", pa.string()),
+    pa.field("flight_date", pa.date32()),
+    pa.field("endpoint", pa.string()),
+    pa.field("cached_at", pa.timestamp("us", tz="UTC")),
+])
+
+
+def is_airport_empty(delta_root: str, airport_code: str, flight_date: datetime.date, endpoint: str) -> bool:
+    """Consulta si un (aeropuerto, fecha, endpoint) está cacheado como vacío.
+
+    Args:
+        delta_root: Ruta base Delta.
+        airport_code: Código ICAO del aeropuerto.
+        flight_date: Fecha del vuelo.
+        endpoint: ``arrivals`` o ``departures``.
+
+    Returns:
+        ``True`` si está en cache (no llamar a la API).
+    """
+    from deltalake import DeltaTable
+    import pyarrow.compute as pc
+    from .config import get_storage_options
+
+    table_uri = _build_table_uri(delta_root, "system", "empty_airport_cache")
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+        table = dt.to_pyarrow_table(columns=["airport_code", "flight_date", "endpoint"])
+    except Exception:
+        return False
+
+    date_scalar = pa.scalar(flight_date, type=pa.date32())
+    mask = pc.and_(
+        pc.equal(table.column("airport_code"), airport_code),
+        pc.and_(
+            pc.equal(table.column("flight_date"), date_scalar),
+            pc.equal(table.column("endpoint"), endpoint),
+        ),
+    )
+    return pc.sum(mask).as_py() > 0
+
+
+def cache_empty_airport(delta_root: str, airport_code: str, flight_date: datetime.date, endpoint: str) -> None:
+    """Cachea que un (aeropuerto, fecha, endpoint) devolvió 0 vuelos.
+
+    Args:
+        delta_root: Ruta base Delta.
+        airport_code: Código ICAO del aeropuerto.
+        flight_date: Fecha del vuelo.
+        endpoint: ``arrivals`` o ``departures``.
+    """
+    from datetime import UTC, datetime
+    from deltalake import write_deltalake
+    from .config import get_storage_options
+
+    table_uri = _build_table_uri(delta_root, "system", "empty_airport_cache")
+    row = {
+        "airport_code": airport_code,
+        "flight_date": flight_date,
+        "endpoint": endpoint,
+        "cached_at": datetime.now(UTC),
+    }
+    table = pa.Table.from_pylist([row], schema=EMPTY_CACHE_SCHEMA)
+    write_deltalake(
+        table_uri, table,
+        mode="append",
+        storage_options=get_storage_options(),
+    )
+    logger.debug("Cache empty: %s %s %s", airport_code, flight_date, endpoint)
