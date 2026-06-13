@@ -10,20 +10,24 @@ verificando créditos disponibles y saltando aeropuertos ya cargados en Delta La
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
 from .client_pool import ClientPool
-from .config import AEROPUERTOS, get_all_credentials, get_delta_root
+from .config import AEROPUERTOS, get_all_credentials, get_delta_root, get_storage_options
 from .credit_checker import can_extract
 from .extract_flights import fetch_arrivals_raw, fetch_departures_raw, parse_flight_list
 from .logging_config import setup_daily_logger
-from .storage import write_flights_silver
+from .storage import write_raw
+from .storage_gold import write_flights_gold
+from .storage_silver import write_flights_silver
 
 # Retry delay entre pares arrival+departure (evitar rate limiting por minuto)
 REQUEST_DELAY = 5.0
@@ -37,6 +41,45 @@ SPANISH_AIRPORT_CODES: list[str] = [
 
 # Umbral mínimo de créditos — 0 para consumir hasta el último crédito
 MIN_CREDITS = 0
+
+# ---------------------------------------------------------------------------
+# Caché local de aeropuertos sin datos (404) — evita malgastar créditos
+# ---------------------------------------------------------------------------
+_EMPTY_CACHE_PATH = Path("data/.empty_airports_cache.json")
+_empty_cache: dict[str, list[str]] | None = None
+
+
+def _load_empty_cache() -> dict[str, list[str]]:
+    global _empty_cache
+    if _empty_cache is None:
+        try:
+            _empty_cache = json.loads(_EMPTY_CACHE_PATH.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            _empty_cache = {}
+    return _empty_cache
+
+
+def _save_empty_cache(cache: dict[str, list[str]]) -> None:
+    _EMPTY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _EMPTY_CACHE_PATH.write_text(json.dumps(cache, indent=2, sort_keys=True))
+
+
+def _cache_empty_airport(target_date: datetime.date, apt: str) -> None:
+    """Guarda que un aeropuerto no tiene datos para una fecha concreta."""
+    cache = _load_empty_cache()
+    date_str = str(target_date)
+    if date_str not in cache:
+        cache[date_str] = []
+    if apt not in cache[date_str]:
+        cache[date_str].append(apt)
+    _save_empty_cache(cache)
+
+
+def _is_airport_empty_cached(target_date: datetime.date, apt: str) -> bool:
+    """True si ya sabemos que este aeropuerto no tiene datos para esta fecha."""
+    cache = _load_empty_cache()
+    date_str = str(target_date)
+    return date_str in cache and apt in cache[date_str]
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -74,7 +117,7 @@ def _get_existing_airports_for_day(
         from deltalake import DeltaTable
 
         table_uri = f"{delta_root}/silver/flights"
-        dt = DeltaTable(table_uri)
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
         table = dt.to_pyarrow_table()
 
         # Filtrar por flight_date
@@ -152,42 +195,77 @@ def _extract_day(
         }
 
     for i, apt in enumerate(missing):
+        # Saltar aeropuertos sin datos confirmados en ejecuciones anteriores
+        if _is_airport_empty_cached(target_date, apt):
+            logger.info("  %s: sin datos (caché)", apt)
+            total_airports += 1
+            continue
+
         if i > 0:
             time.sleep(REQUEST_DELAY)
 
+        # Intentar arrivals y departures de forma INDEPENDIENTE
+        raw_a: Any = None
+        raw_d: Any = None
+        ep_a: str | None = None
+        ep_d: str | None = None
+        params_a: dict[str, Any] | None = None
+        params_d: dict[str, Any] | None = None
+        arr_empty = False
+        dep_empty = False
+
         try:
-            # Verificar créditos antes de cada par de peticiones (opcional)
-            _, _, raw_a = fetch_arrivals_raw(client, apt, day_start, day_end)
-            _, _, raw_d = fetch_departures_raw(client, apt, day_start, day_end)
-            flights = parse_flight_list(raw_a) + parse_flight_list(raw_d)
-            if flights:
-                write_flights_silver(flights, delta_root)
-            total_flights += len(flights)
-            total_airports += 1
-            logger.info(
-                "  %s (%d/%d): %d arrivals + %d departures = %d vuelos",
-                apt, i + 1, len(missing),
-                len(parse_flight_list(raw_a)) if raw_a else 0,
-                len(parse_flight_list(raw_d)) if raw_d else 0,
-                len(flights),
-            )
+            ep_a, params_a, raw_a = fetch_arrivals_raw(client, apt, day_start, day_end)
+            write_raw(ep_a, params_a, raw_a, delta_root)
         except Exception as e:
             err_msg = str(e)
-            # 404 = sin datos en el rango (no es error real)
+            if "429" in err_msg or "rate limited" in err_msg:
+                logger.warning("  %s: arrivals rate limited. Deteniendo.", apt)
+                errors.append({"airport": apt, "error": f"arrivals: {err_msg}"})
+                break
             if "404" in err_msg:
-                logger.info("  %s: sin datos en el rango", apt)
-                total_airports += 1  # contar como procesado
-            elif "429" in err_msg or "rate limited" in err_msg:
-                logger.warning(
-                    "  %s: créditos agotados (%s). Deteniendo extracción.",
-                    apt,
-                    "429" if "429" in err_msg else "pool exhausto",
-                )
-                errors.append({"airport": apt, "error": err_msg})
-                break  # salir del bucle, créditos agotados
+                logger.info("  %s: arrivals sin datos en el rango", apt)
+                arr_empty = True
             else:
-                logger.warning("  %s: error: %s", apt, err_msg)
-                errors.append({"airport": apt, "error": err_msg})
+                logger.warning("  %s: arrivals error: %s", apt, err_msg)
+                errors.append({"airport": apt, "error": f"arrivals: {err_msg}"})
+
+        try:
+            ep_d, params_d, raw_d = fetch_departures_raw(client, apt, day_start, day_end)
+            write_raw(ep_d, params_d, raw_d, delta_root)
+        except Exception as e:
+            err_msg = str(e)
+            if "429" in err_msg or "rate limited" in err_msg:
+                logger.warning("  %s: departures rate limited. Deteniendo.", apt)
+                errors.append({"airport": apt, "error": f"departures: {err_msg}"})
+                break
+            if "404" in err_msg:
+                logger.info("  %s: departures sin datos en el rango", apt)
+                dep_empty = True
+            else:
+                logger.warning("  %s: departures error: %s", apt, err_msg)
+                errors.append({"airport": apt, "error": f"departures: {err_msg}"})
+
+        # Solo cachear como vacío si ambos endpoints confirmaron sin datos
+        if arr_empty and dep_empty:
+            _cache_empty_airport(target_date, apt)
+
+        flights = (parse_flight_list(raw_a) if raw_a else []) + (
+            parse_flight_list(raw_d) if raw_d else []
+        )
+        if flights:
+            write_flights_silver(flights)
+            write_flights_gold(flights)
+        total_flights += len(flights)
+        if raw_a is not None or raw_d is not None:
+            total_airports += 1
+        logger.info(
+            "  %s (%d/%d): %d arrivals + %d departures = %d vuelos",
+            apt, i + 1, len(missing),
+            len(parse_flight_list(raw_a)) if raw_a else 0,
+            len(parse_flight_list(raw_d)) if raw_d else 0,
+            len(flights),
+        )
 
     return {
         "date": str(target_date),
@@ -200,9 +278,13 @@ def _extract_day(
     }
 
 
-def _check_credits_and_exit() -> bool:
-    """Verifica créditos y loggea info. Nunca bloquea la extracción."""
-    _, info = can_extract(min_required=MIN_CREDITS)
+def _check_credits_and_exit(pool=None) -> bool:
+    """Verifica créditos y loggea info. Nunca bloquea la extracción.
+
+    Args:
+        pool: ClientPool opcional para sondear todas las cuentas.
+    """
+    _, info = can_extract(min_required=MIN_CREDITS, pool=pool)
     remaining = info.get("remaining", "?")
     retry = info.get("retry_after")
     reset = info.get("reset_at")
@@ -215,7 +297,9 @@ def _check_credits_and_exit() -> bool:
     return True
 
 
-def _fill_gaps(client: Any, delta_root: str, max_lookback: int = 30) -> int:
+def _fill_gaps(
+    client: Any, delta_root: str, max_lookback: int = 30,
+) -> int:
     """Rellena huecos históricos con créditos sobrantes tras la extracción diaria.
 
     Escanea desde D-3 hacia atrás buscando fechas con aeropuertos españoles
@@ -232,7 +316,7 @@ def _fill_gaps(client: Any, delta_root: str, max_lookback: int = 30) -> int:
     for offset in range(3, max_lookback + 1):
         target_date = (now_utc - timedelta(days=offset)).date()
 
-        ok, info = can_extract(min_required=60)
+        ok, info = can_extract(min_required=60, pool=client)
         if not ok:
             logger.info(
                 "Relleno de huecos: créditos insuficientes (%s). Parando.",
@@ -297,7 +381,6 @@ def main(argv: list[str] | None = None) -> int:
     # Crear pool de clientes (solo si no es dry-run)
     client: ClientPool | None = None
     if not args.dry_run:
-        _check_credits_and_exit()
         creds = get_all_credentials()
         if not creds:
             logger.error(
@@ -306,14 +389,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         client = ClientPool(creds)
+        names = [cred.get("name", "?") for cred in creds]
         logger.info(
             "Pool creado con %d cuentas: %s",
             client.account_count,
-            [client.current_name],  # nombre de la activa inicial
+            names,
         )
-        # Log de todas las cuentas disponibles
-        for cred in creds:
-            logger.info("  Cuenta disponible: %s (%s)", cred.get("name", "?"), cred["id"])
+        # Sonda ahora a través del pool (rota si PABLO está rate limited)
+        _check_credits_and_exit(client)
 
     start_time = time.time()
     total_summary: dict[str, Any] = {
