@@ -22,6 +22,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from .config import get_storage_options
 from .models import Flight, StateVector, Track
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,27 @@ try:
 except ImportError as exc:
     msg = "deltalake no está instalado. Ejecuta: pip install deltalake"
     raise ImportError(msg) from exc
+
+# ===================================================================
+# Helpers de ruta (local y S3)
+# ===================================================================
+
+
+def _build_table_uri(base_path: str, *parts: str) -> str:
+    """Construye URI de tabla manejando paths locales y S3 URIs.
+
+    Args:
+        base_path: Ruta base (ej. ``data/raw`` o ``s3://bucket``).
+        *parts: Segmentos adicionales (bronze, silver, etc.).
+
+    Returns:
+        URI completa para la tabla Delta.
+    """
+    if "://" in base_path:
+        base = base_path.rstrip("/")
+        return "/".join([base, *parts])
+    return str(Path(base_path, *parts))
+
 
 # ===================================================================
 # BRONZE - Raw JSON (datos exactos de la API + metadatos)
@@ -43,6 +65,64 @@ RAW_SCHEMA = pa.schema([
     pa.field("response", pa.string()),
     pa.field("ingestion_date", pa.date32()),
 ])
+
+
+def write_raw_json(
+    source_name: str,
+    endpoint: str,
+    params: dict[str, Any] | None,
+    response_data: Any,
+    delta_root: str,
+    storage_options: dict[str, str] | None = None,
+) -> int:
+    """Escribe JSON crudo de cualquier fuente externa en Bronze.
+
+    Crea una tabla Delta por fuente: ``bronze.{source_name}``.
+    Cada fila contiene metadatos de la petición más la respuesta completa.
+
+    Tabla: {delta_root}/bronze/{source_name}/
+    Particionado por: source
+
+    Args:
+        source_name: Identificador de la fuente (ej. ``schedules_aviationstack``).
+        endpoint: URL del endpoint consultado.
+        params: Parámetros de la petición.
+        response_data: Respuesta JSON (dict o list).
+        delta_root: Ruta base de datos Delta.
+        storage_options: Opciones de storage remoto (R2/Azure).
+
+    Returns:
+        Número de filas escritas (1 por petición).
+    """
+    table_uri = _build_table_uri(delta_root, "bronze", source_name)
+    now = datetime.now(UTC)
+
+    row = {
+        "source": source_name,
+        "endpoint": endpoint,
+        "params": json.dumps(params) if params else None,
+        "response": json.dumps(response_data, ensure_ascii=False),
+        "fetched_at": now,
+    }
+
+    schema = pa.schema([
+        pa.field("source", pa.string()),
+        pa.field("endpoint", pa.string()),
+        pa.field("params", pa.string()),
+        pa.field("response", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+    ])
+
+    table = pa.Table.from_pylist([row], schema=schema)
+    write_deltalake(
+        table_uri,
+        table,
+        partition_by=["source"],
+        mode="append",
+        storage_options=storage_options or get_storage_options(),
+    )
+    logger.info("Bronze (%s): %s (%s)", source_name, endpoint, params)
+    return 1
 
 
 def write_raw(
@@ -65,7 +145,7 @@ def write_raw(
     Returns:
         Número de filas escritas (1 por petición).
     """
-    table_uri = str(Path(base_path) / "bronze" / "opensky")
+    table_uri = _build_table_uri(base_path, "bronze", "opensky")
     now = datetime.now(UTC)
     ingestion_date = now.date()
 
@@ -83,6 +163,7 @@ def write_raw(
         table,
         partition_by=["ingestion_date"],
         mode="append",
+        storage_options=get_storage_options(),
     )
     logger.info("Raw escrita en %s: %s (params=%s)", table_uri, endpoint, params)
     return 1
@@ -160,6 +241,7 @@ def _write_silver(
         table,
         partition_by=partition_cols,
         mode="append",
+        storage_options=get_storage_options(),
     )
     return len(rows)
 
@@ -173,7 +255,7 @@ def write_flights_silver(flights: list[Flight], base_path: str) -> int:
     if not flights:
         return 0
 
-    table_uri = str(Path(base_path) / "silver" / "flights")
+    table_uri = _build_table_uri(base_path, "silver", "flights")
     rows = []
     for f in flights:
         flight_date = f.first_seen.date() if f.first_seen else None
@@ -207,7 +289,7 @@ def write_state_vectors_silver(states: list[StateVector], base_path: str) -> int
     if not states:
         return 0
 
-    table_uri = str(Path(base_path) / "silver" / "state_vectors")
+    table_uri = _build_table_uri(base_path, "silver", "state_vectors")
     now = datetime.now(UTC).date()
     rows = []
     for s in states:
@@ -246,7 +328,7 @@ def write_tracks_silver(tracks: list[Track], base_path: str) -> int:
     if not tracks:
         return 0
 
-    table_uri = str(Path(base_path) / "silver" / "tracks")
+    table_uri = _build_table_uri(base_path, "silver", "tracks")
     rows = []
     for t in tracks:
         track_date = t.start_time.date() if t.start_time else None
