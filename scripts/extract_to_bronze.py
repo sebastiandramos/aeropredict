@@ -15,23 +15,27 @@ Flujo:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from aeropredict.opensky.client_pool import ClientPool
 from aeropredict.opensky.config import AEROPUERTOS, get_all_credentials, get_delta_root
 from aeropredict.opensky.credit_checker import can_extract
 from aeropredict.opensky.extract_flights import fetch_arrivals_raw, fetch_departures_raw
 from aeropredict.opensky.logging_config import setup_daily_logger
+from aeropredict.opensky.checkpoint_mongo import (
+    get_checkpoint_dict,
+    save_checkpoint_dict_entry,
+)
 from aeropredict.opensky.storage import (
     cache_empty_airport,
     is_airport_empty,
     write_raw,
 )
+
+CHECKPOINT_COLLECTION = "bronze_extract"
 
 REQUEST_DELAY = 5.0
 logger = logging.getLogger("extract_to_bronze")
@@ -41,28 +45,6 @@ SPANISH_AIRPORT_CODES: list[str] = [
 ]
 
 MIN_CREDITS = 0
-
-_CHECKPOINT_DIR = Path("data/checkpoints")
-_CHECKPOINT_FILE = _CHECKPOINT_DIR / "bronze_extract.json"
-
-
-def _load_checkpoint() -> dict[str, list[str]]:
-    """Carga el checkpoint de aeropuertos ya extraídos por fecha."""
-    try:
-        return json.loads(_CHECKPOINT_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _save_checkpoint(date_str: str, airports: list[str]) -> None:
-    """Guarda qué aeropuertos se extrajeron para una fecha."""
-    cp = _load_checkpoint()
-    existing = set(cp.get(date_str, []))
-    existing.update(airports)
-    cp[date_str] = sorted(existing)
-    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    _CHECKPOINT_FILE.write_text(json.dumps(cp, indent=2, sort_keys=True))
-    logger.info("Checkpoint actualizado: %s → %d aeropuertos", date_str, len(cp[date_str]))
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -96,7 +78,7 @@ def _extract_day(
     delta_root = get_delta_root()
 
     # Cargar checkpoint para saltar aeropuertos ya extraídos
-    cp = _load_checkpoint()
+    cp = get_checkpoint_dict(CHECKPOINT_COLLECTION)
     date_str = str(target_date)
     already_extracted = set(cp.get(date_str, []))
 
@@ -211,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         all_errors.extend(result["errors"])
 
         if result["airports_done"]:
-            _save_checkpoint(result["date"], result["airports_done"])
+            save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
 
     elapsed = time.time() - start
 

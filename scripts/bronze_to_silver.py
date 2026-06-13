@@ -19,37 +19,20 @@ import logging
 import sys
 import time
 from datetime import UTC, datetime, date as date_type
-from pathlib import Path
 from typing import Any
 
+from aeropredict.opensky.checkpoint_mongo import (
+    add_to_checkpoint_set,
+    get_checkpoint_set,
+)
 from aeropredict.opensky.config import get_delta_root, get_storage_options
 from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_silver import write_flights_silver, close as close_silver
 
+CHECKPOINT_COLLECTION = "bronze_to_silver"
 logger = logging.getLogger("bronze_to_silver")
-
-_CHECKPOINT_DIR = Path("data/checkpoints")
-_CHECKPOINT_FILE = _CHECKPOINT_DIR / "bronze_to_silver.json"
-
-
-def _load_bronze_checkpoint() -> set[str]:
-    """Carga fechas (ingestion_date) ya procesadas a Silver."""
-    try:
-        data = json.loads(_CHECKPOINT_FILE.read_text())
-        return set(data.get("dates_done", []))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
-
-
-def _save_bronze_checkpoint(date_str: str) -> None:
-    """Guarda una fecha como procesada a Silver."""
-    cp = _load_bronze_checkpoint()
-    cp.add(date_str)
-    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    _CHECKPOINT_FILE.write_text(json.dumps({"dates_done": sorted(cp)}, indent=2))
-    logger.info("Checkpoint Bronze→Silver actualizado: %s", date_str)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -193,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Procesando la más reciente: %s", target_date)
 
     # Checkpoint: saltar si la fecha ya fue procesada a Silver
-    processed_dates = _load_bronze_checkpoint()
+    processed_dates = get_checkpoint_set(CHECKPOINT_COLLECTION)
     if str(target_date) in processed_dates:
         logger.info("%s ya procesado a Silver (checkpoint), saltando", target_date)
         return 0
@@ -216,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         n = write_flights_silver(flights)
         logger.info("Silver (MongoDB): %d vuelos insertados", n)
-        _save_bronze_checkpoint(str(target_date))
+        add_to_checkpoint_set(CHECKPOINT_COLLECTION, str(target_date))
     except Exception as e:
         logger.error("Error escribiendo a Silver: %s", e)
         close_silver()
