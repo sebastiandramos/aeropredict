@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,9 @@ import pyarrow as pa
 
 from .config import get_storage_options
 from .models import Flight, StateVector, Track
+
+# Ruta local para dual-write (siempre se escribe aquí también)
+_LOCAL_ROOT = "data/raw"
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,28 @@ except ImportError as exc:
 # ===================================================================
 # Helpers de ruta (local y S3)
 # ===================================================================
+
+_LOCAL_ROOT = "data/raw"
+
+
+def _is_cloud_uri(uri: str) -> bool:
+    """``True`` si la URI apunta a cloud (S3, R2, Azure)."""
+    return uri.startswith("s3://") or uri.startswith("abfss://")
+
+
+def _get_cloud_root() -> str | None:
+    """Deriva la URI raíz del backend cloud desde vars de entorno.
+
+    Returns:
+        URI tipo ``s3://bucket-name``, o ``None`` si no hay cloud configurado.
+    """
+    r2_bucket = os.environ.get("R2_BUCKET_NAME")
+    if r2_bucket and os.environ.get("R2_ENDPOINT_URL"):
+        return f"s3://{r2_bucket}"
+    s3_bucket = os.environ.get("S3_BUCKET_NAME")
+    if s3_bucket and os.environ.get("S3_ENDPOINT_URL"):
+        return f"s3://{s3_bucket}"
+    return None
 
 
 def _build_table_uri(base_path: str, *parts: str) -> str:
@@ -114,14 +140,26 @@ def write_raw_json(
     ])
 
     table = pa.Table.from_pylist([row], schema=schema)
-    write_deltalake(
-        table_uri,
-        table,
-        partition_by=["source"],
-        mode="append",
-        storage_options=storage_options or get_storage_options(),
-    )
-    logger.info("Bronze (%s): %s (%s)", source_name, endpoint, params)
+    opts = storage_options or get_storage_options()
+
+    # 1. Escritura primaria (donde apunte delta_root)
+    write_deltalake(table_uri, table, partition_by=["source"], mode="append", storage_options=opts)
+    logger.info("Bronze (%s): %s (%s) → %s", source_name, endpoint, params, table_uri)
+
+    # 2. Dual-write
+    if _is_cloud_uri(delta_root):
+        # root es cloud → replicar a local
+        local_uri = _build_table_uri(_LOCAL_ROOT, "bronze", source_name)
+        write_deltalake(local_uri, table, partition_by=["source"], mode="append")
+        logger.info("Bronze dual local (%s): %s", source_name, local_uri)
+    else:
+        # root es local → replicar a cloud si hay credenciales
+        cloud_root = _get_cloud_root()
+        if cloud_root:
+            cloud_uri = _build_table_uri(cloud_root, "bronze", source_name)
+            write_deltalake(cloud_uri, table, partition_by=["source"], mode="append", storage_options=opts)
+            logger.info("Bronze dual cloud (%s): %s", source_name, cloud_uri)
+
     return 1
 
 
@@ -158,14 +196,26 @@ def write_raw(
     }
 
     table = pa.Table.from_pylist([row], schema=RAW_SCHEMA)
-    write_deltalake(
-        table_uri,
-        table,
-        partition_by=["ingestion_date"],
-        mode="append",
-        storage_options=get_storage_options(),
-    )
-    logger.info("Raw escrita en %s: %s (params=%s)", table_uri, endpoint, params)
+    opts = get_storage_options()
+
+    # 1. Escritura primaria (donde apunte base_path)
+    write_deltalake(table_uri, table, partition_by=["ingestion_date"], mode="append", storage_options=opts)
+    logger.info("Bronce: %s: %s (params=%s)", table_uri, endpoint, params)
+
+    # 2. Dual-write
+    if _is_cloud_uri(base_path):
+        # root es cloud → replicar a local
+        local_uri = _build_table_uri(_LOCAL_ROOT, "bronze", "opensky")
+        write_deltalake(local_uri, table, partition_by=["ingestion_date"], mode="append")
+        logger.info("Bronze dual local: %s", local_uri)
+    else:
+        # root es local → replicar a cloud si hay credenciales
+        cloud_root = _get_cloud_root()
+        if cloud_root:
+            cloud_uri = _build_table_uri(cloud_root, "bronze", "opensky")
+            write_deltalake(cloud_uri, table, partition_by=["ingestion_date"], mode="append", storage_options=opts)
+            logger.info("Bronze dual cloud: %s", cloud_uri)
+
     return 1
 
 
