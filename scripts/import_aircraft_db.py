@@ -10,7 +10,8 @@ import logging
 import os
 from pathlib import Path
 
-from aeropredict.opensky.config import get_opensky_aircraft_db_path
+from aeropredict.opensky.config import get_delta_root, get_opensky_aircraft_db_path
+from aeropredict.opensky.storage import write_raw_json
 from aeropredict.sources.aircraft_db import (
     download_aircraft_csv,
     import_aircraft_to_mongodb,
@@ -73,7 +74,18 @@ def main() -> None:
         logger.info("Dry-run: no se importó nada")
         return
 
-    # -- Import a MongoDB --
+    # -- Bronze (Delta Lake) --
+    delta_root = get_delta_root()
+    write_raw_json(
+        source_name="aircraft_db",
+        endpoint="csv/import",
+        params={"path": csv_path, "total_records": len(records)},
+        response_data=records,
+        delta_root=delta_root,
+    )
+    logger.info("Bronze: %d registros en %s", len(records), delta_root)
+
+    # -- Silver (MongoDB) --
     logger.info("Importando a MongoDB...")
     imported = import_aircraft_to_mongodb(csv_path)
     logger.info("Importados %d registros a MongoDB", imported)
