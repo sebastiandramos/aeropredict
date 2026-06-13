@@ -175,10 +175,15 @@ def get_storage_options() -> dict[str, str] | None:
     URI esperada en ``OPENSKY_DELTA_ROOT``:
       ``abfss://<container>@<account>.dfs.core.windows.net``
 
-    **S3-compatible** (Cloudflare R2, MinIO, Scaleway…)
+    **S3-compatible** (MinIO, Scaleway, Backblaze B2…)
     Variables requeridas:
       - ``S3_ENDPOINT_URL``
       - ``S3_ACCESS_KEY_ID`` / ``S3_SECRET_ACCESS_KEY``
+
+    **Cloudflare R2** (prioridad 3)
+    Variables requeridas:
+      - ``R2_ENDPOINT_URL``
+      - ``R2_ACCESS_KEY_ID`` / ``R2_SECRET_ACCESS_KEY``
 
     Si no hay ninguna configurada, devuelve ``None`` (modo almacenamiento local).
     """
@@ -194,13 +199,24 @@ def get_storage_options() -> dict[str, str] | None:
             opts["AZURE_STORAGE_SAS_TOKEN"] = sas_token
         return opts
 
-    # --- Prioridad 2: S3 ---
+    # --- Prioridad 2: S3 (MinIO, Scaleway, Backblaze B2…) ---
     endpoint = os.environ.get("S3_ENDPOINT_URL")
     if endpoint:
         return {
             "AWS_ENDPOINT_URL": endpoint,
             "AWS_ACCESS_KEY_ID": os.environ.get("S3_ACCESS_KEY_ID", ""),
             "AWS_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": "auto",
+            "aws_conditional_put": "etag",
+        }
+
+    # --- Prioridad 3: Cloudflare R2 (S3-compatible) ---
+    r2_endpoint = os.environ.get("R2_ENDPOINT_URL")
+    if r2_endpoint:
+        return {
+            "AWS_ENDPOINT_URL": r2_endpoint,
+            "AWS_ACCESS_KEY_ID": os.environ.get("R2_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.environ.get("R2_SECRET_ACCESS_KEY", ""),
             "AWS_REGION": "auto",
             "aws_conditional_put": "etag",
         }
