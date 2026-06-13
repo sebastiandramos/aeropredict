@@ -3,6 +3,9 @@
 Cuando una cuenta recibe rate limiting (HTTP 429), el pool rota
 automáticamente a la siguiente cuenta disponible.
 
+Este módulo extiende el :class:`Pool` genérico con la lógica específica
+de OpenSky: rotación en 429 y clientes autenticados.
+
 Uso::
 
     pool = ClientPool(get_all_credentials())
@@ -17,12 +20,13 @@ from typing import Any
 import requests
 
 from .client import OpenSkyClient
+from .pool import Pool
 
 logger = logging.getLogger(__name__)
 
 
 class ClientPool:
-    """Administra N cuentas OpenSky rotando cuando una es rate limited.
+    """Pool de cuentas OpenSky con rotación automática en rate limiting.
 
     Args:
         credentials: Lista de dicts con claves ``name``, ``id``, ``secret``.
@@ -37,33 +41,53 @@ class ClientPool:
         if not credentials:
             raise ValueError("Se necesita al menos una cuenta OpenSky")
 
-        self._clients: list[OpenSkyClient] = []
-        self._names: list[str] = []
-        self._current: int = 0
+        self._names: list[str] = [cred.get("name", "?") for cred in credentials]
 
-        for cred in credentials:
-            self._clients.append(
+        self._pool: Pool[OpenSkyClient] = Pool(
+            items=[
                 OpenSkyClient(
                     client_id=cred["id"],
                     client_secret=cred["secret"],
                     timeout=timeout,
-                ),
-            )
-            self._names.append(cred.get("name", "?"))
+                )
+                for cred in credentials
+            ],
+            should_rotate=_is_rate_limited,
+            labels=self._names,
+        )
 
     # ------------------------------------------------------------------
-    # Propiedades
+    # Propiedades (API pública para credit_checker y otros)
     # ------------------------------------------------------------------
+
+    @property
+    def clients(self) -> list[OpenSkyClient]:
+        """Lista de clientes OpenSky."""
+        return self._pool.items
+
+    @property
+    def names(self) -> list[str]:
+        """Nombres de cada cuenta."""
+        return self._names
+
+    @property
+    def current_index(self) -> int:
+        """Índice de la cuenta activa actualmente."""
+        return self._pool.current_index
+
+    @current_index.setter
+    def current_index(self, idx: int) -> None:
+        self._pool.current_index = idx
 
     @property
     def current_name(self) -> str:
         """Nombre de la cuenta activa actualmente."""
-        return self._names[self._current]
+        return self._names[self._pool.current_index]
 
     @property
     def account_count(self) -> int:
         """Número total de cuentas configuradas."""
-        return len(self._clients)
+        return self._pool.item_count
 
     # ------------------------------------------------------------------
     # Método público principal
@@ -76,9 +100,6 @@ class ClientPool:
     ) -> Any:
         """Petición GET con rotación automática en 429.
 
-        Intenta con la cuenta activa. Si recibe 429, rota a la siguiente
-        cuenta. Si todas las cuentas están rate limited, lanza error.
-
         Args:
             path: Ruta relativa de la API (ej. ``/flights/arrival``).
             params: Parámetros de query string.
@@ -90,42 +111,21 @@ class ClientPool:
             RuntimeError: Si todas las cuentas están rate limited.
             requests.HTTPError: Para errores HTTP que no sean 429.
         """
-        start_idx = self._current
-        n = self.account_count
-
-        for attempt in range(n):
-            idx = (start_idx + attempt) % n
-            client = self._clients[idx]
-            name = self._names[idx]
-
-            logger.info(
-                "Pool get(%s) → cuenta=%s (intento %d/%d)",
-                path, name, attempt + 1, n,
-            )
-
-            try:
-                result = client.get(path, params)
-                # Actualizar puntero a la cuenta que funcionó
-                if idx != self._current:
-                    logger.info("Pool rotado a cuenta=%s como activa", name)
-                    self._current = idx
-                return result
-
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 429:
-                    logger.warning(
-                        "Pool: cuenta=%s rate limited (429), "
-                        "rotando a siguiente...",
-                        name,
-                    )
-                    continue
-                # Cualquier otro HTTPError (401, 404, 500...) se propaga
-                raise
-
-        # Todas las cuentas agotadas
-        msg = (
-            f"Todas las {n} cuentas OpenSky rate limited para {path}. "
-            "Esperar a que se restablezcan los créditos."
+        return self._pool.execute(
+            lambda client: client.get(path, params),
+            context=path,
         )
-        logger.error(msg)
-        raise RuntimeError(msg)
+
+
+# ------------------------------------------------------------------
+# Helper de rotación
+# ------------------------------------------------------------------
+
+
+def _is_rate_limited(e: Exception) -> bool:
+    """True si la excepción es un 429 HTTP (rate limited)."""
+    return (
+        isinstance(e, requests.HTTPError)
+        and e.response is not None
+        and e.response.status_code == 429
+    )

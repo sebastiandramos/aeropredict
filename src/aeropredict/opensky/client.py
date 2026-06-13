@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://opensky-network.org/api"
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0  # segundos entre reintentos
-MAX_RETRY_AFTER = 60  # tope para Retry-After (evitar esperas de horas)
 
 
 class OpenSkyClient:
@@ -78,18 +77,11 @@ class OpenSkyClient:
                     timeout=self._timeout,
                 )
 
-                # Rate limiting - esperar y reintentar
+                # Rate limiting - propagar inmediatamente para que ClientPool rote
                 if resp.status_code == 429:
-                    retry_after = _parse_retry_after(resp)
                     logger.warning(
-                        "Rate limited (429). Esperando %ds (intento %d/%d)",
-                        retry_after,
-                        attempt,
-                        MAX_RETRIES,
+                        "Rate limited (429) en cuenta. ClientePool rotará.",
                     )
-                    if attempt < MAX_RETRIES:
-                        time.sleep(retry_after)
-                        continue
                     resp.raise_for_status()
 
                 # 401 - token expirado, forzar refresh en siguiente intento
@@ -145,13 +137,4 @@ class OpenSkyClient:
         raise RuntimeError(msg) from last_error
 
 
-def _parse_retry_after(resp: requests.Response) -> float:
-    """Lee y acota la cabecera Retry-After de una respuesta 429."""
-    for header in ("X-Rate-Limit-Retry-After-Seconds", "Retry-After"):
-        val = resp.headers.get(header)
-        if val is not None:
-            try:
-                return min(float(val), MAX_RETRY_AFTER)
-            except ValueError:
-                pass
-    return 60.0
+
