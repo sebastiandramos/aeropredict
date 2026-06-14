@@ -308,7 +308,8 @@ def get_opensky_aircraft_db_path() -> str:
 
 def get_delta_root() -> str:
     """Ruta base para tablas Delta. Por defecto ``data/raw``."""
-    return os.environ.get("OPENSKY_DELTA_ROOT", "data/raw")
+    root = os.environ.get("OPENSKY_DELTA_ROOT", "data/raw")
+    return root if root else "data/raw"
 
 
 def get_bbox() -> BoundingBox:

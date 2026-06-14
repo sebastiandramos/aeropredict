@@ -19,6 +19,7 @@ import logging
 import sys
 import time
 from datetime import UTC, datetime, date as date_type
+from pathlib import Path
 from typing import Any
 
 from aeropredict.opensky.checkpoint_mongo import (
@@ -59,7 +60,7 @@ def _get_bronze_dates(delta_root: str) -> list[date_type]:
     from deltalake import DeltaTable
 
     try:
-        table_uri = f"{delta_root}/bronze/opensky"
+        table_uri = str(Path(delta_root, "bronze", "opensky"))
         dt = DeltaTable(table_uri, storage_options=get_storage_options())
         partitions = dt.partitions()
         # Cada partición: {ingestion_date: YYYY-MM-DD}
@@ -95,7 +96,7 @@ def _read_bronze_flights(
     """
     from deltalake import DeltaTable
 
-    table_uri = f"{delta_root}/bronze/opensky"
+    table_uri = str(Path(delta_root, "bronze", "opensky"))
     logger.info("Leyendo Bronze: %s", table_uri)
 
     dt = DeltaTable(table_uri, storage_options=get_storage_options())
