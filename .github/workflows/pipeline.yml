@@ -27,7 +27,7 @@ env:
 
 jobs:
   extract:
-    name: "1/3 Extract → Bronze"
+    name: "1/5 Extract → Bronze"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,7 +42,7 @@ jobs:
         run: python scripts/extract_to_bronze.py --days 2
 
   bronze_to_silver:
-    name: "2/3 Bronze → Silver"
+    name: "2/5 Bronze → Silver"
     needs: extract
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -58,7 +58,7 @@ jobs:
         run: python scripts/bronze_to_silver.py
 
   silver_to_gold:
-    name: "3/3 Silver → Gold"
+    name: "3/5 Silver → Gold (flights)"
     needs: bronze_to_silver
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -72,3 +72,35 @@ jobs:
         run: pip install -e .
       - name: MongoDB Atlas → Neon PostgreSQL
         run: python scripts/silver_to_gold.py
+
+  entities_to_gold:
+    name: "4/5 Entity tables → Gold"
+    needs: silver_to_gold
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Sync aircraft + weather → PostgreSQL
+        run: python scripts/silver_to_gold_entities.py
+
+  build_feature_store:
+    name: "5/5 Feature store"
+    needs: entities_to_gold
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Build gold.feature_store
+        run: python scripts/build_feature_store.py

@@ -219,3 +219,5 @@ __marimo__/
 .conda
 .omo
 data/*
+!data/mock/
+!data/mock/**
