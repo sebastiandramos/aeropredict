@@ -2,7 +2,19 @@
 
 Las tablas se crean automáticamente bajo el esquema ``gold``.
 
-Tablas:
+Tablas entidad (raw desde MongoDB):
+    ``flights``
+        Vuelos raw. Se sincroniza desde la colección ``flights`` de MongoDB.
+
+    ``aircraft``
+        Aeronaves con metadatos (fabricante, operador, tipo, antigüedad).
+        Se sincroniza desde la colección ``aircraft`` de MongoDB.
+
+    ``weather``
+        Datos meteorológicos horarios por aeropuerto.
+        Se sincroniza desde la colección ``weather`` de MongoDB.
+
+Tablas agregadas (desde flights):
     ``daily_airport_traffic``
         Vuelos por aeropuerto y día (arrivals / departures).
         Útil para identificar días punta, estacionalidad, etc.
@@ -20,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
 import psycopg2
@@ -64,6 +77,56 @@ CREATE TABLE IF NOT EXISTS gold.hourly_distribution (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (airport_code, flight_date, hour)
 );
+
+CREATE TABLE IF NOT EXISTS gold.flights (
+    id                  SERIAL PRIMARY KEY,
+    icao24              VARCHAR(6) NOT NULL,
+    callsign            VARCHAR(10),
+    first_seen          TIMESTAMPTZ,
+    last_seen           TIMESTAMPTZ,
+    flight_date         DATE NOT NULL,
+    est_departure_airport        VARCHAR(4),
+    est_arrival_airport          VARCHAR(4),
+    departure_airport_horiz_distance FLOAT,
+    departure_airport_vert_distance  FLOAT,
+    arrival_airport_horiz_distance   FLOAT,
+    arrival_airport_vert_distance    FLOAT,
+    departure_airport_candidates_count INTEGER,
+    arrival_airport_candidates_count   INTEGER,
+    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_flights_icao24_date ON gold.flights (icao24, flight_date);
+CREATE INDEX IF NOT EXISTS idx_flights_date ON gold.flights (flight_date);
+
+CREATE TABLE IF NOT EXISTS gold.aircraft (
+    icao24              VARCHAR(10) NOT NULL PRIMARY KEY,
+    typecode            VARCHAR(30),
+    manufacturer        VARCHAR(150),
+    operator            VARCHAR(100),
+    first_flight_date   DATE,
+    icao_aircraft_type  VARCHAR(10),
+    registration        VARCHAR(20),
+    serial_number       VARCHAR(50),
+    tracked             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS gold.weather (
+    id                  SERIAL PRIMARY KEY,
+    airport_code        VARCHAR(4) NOT NULL,
+    timestamp           TIMESTAMPTZ NOT NULL,
+    flight_date         DATE NOT NULL,
+    temperature_2m      FLOAT,
+    precipitation       FLOAT,
+    wind_speed_10m      FLOAT,
+    wind_gusts_10m      FLOAT,
+    visibility          FLOAT,
+    cloud_cover         FLOAT,
+    relative_humidity_2m FLOAT,
+    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_weather_airport_date ON gold.weather (airport_code, flight_date);
 
 CREATE TABLE IF NOT EXISTS gold.feature_store (
     icao24                      VARCHAR(6) NOT NULL,
@@ -254,6 +317,196 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
 
     logger.info("Gold: %s", counts)
     return counts
+
+
+# ===================================================================
+# Gold — entidades (sync desde MongoDB)
+# ===================================================================
+
+
+def write_flights_gold_raw(flight_docs: list[dict[str, Any]]) -> int:
+    """Inserta vuelos raw en gold.flights.
+
+    Lee documentos tal cual desde la colección ``flights`` de MongoDB
+    y los escribe en la tabla tabular ``gold.flights``.
+    Omite duplicados basándose en (icao24, flight_date, first_seen, last_seen).
+
+    Args:
+        flight_docs: Lista de documentos de MongoDB (colección flights).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not flight_docs:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    for doc in flight_docs:
+        fd = doc.get("flight_date")
+        if fd and hasattr(fd, "strftime"):
+            flight_date = fd.strftime("%Y-%m-%d")
+        elif fd:
+            flight_date = str(fd)[:10]
+        else:
+            continue
+
+        rows.append((
+            doc.get("icao24", ""),
+            doc.get("callsign"),
+            doc.get("first_seen"),
+            doc.get("last_seen"),
+            flight_date,
+            doc.get("est_departure_airport"),
+            doc.get("est_arrival_airport"),
+            doc.get("departure_airport_horiz_distance"),
+            doc.get("departure_airport_vert_distance"),
+            doc.get("arrival_airport_horiz_distance"),
+            doc.get("arrival_airport_vert_distance"),
+            doc.get("departure_airport_candidates_count"),
+            doc.get("arrival_airport_candidates_count"),
+        ))
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.flights
+            (icao24, callsign, first_seen, last_seen, flight_date,
+             est_departure_airport, est_arrival_airport,
+             departure_airport_horiz_distance, departure_airport_vert_distance,
+             arrival_airport_horiz_distance, arrival_airport_vert_distance,
+             departure_airport_candidates_count, arrival_airport_candidates_count)
+            VALUES %s
+            ON CONFLICT (id) DO NOTHING
+            """,
+            rows,
+            template=(
+                "(%s, %s, %s::timestamptz, %s::timestamptz, %s::date,"
+                " %s, %s, %s, %s, %s, %s, %s, %s)"
+            ),
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold flights raw: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+def _parse_aircraft_date(raw: Any) -> str | None:
+    """Valida que un valor sea una fecha ISO (YYYY-MM-DD) o None."""
+    if not raw or not isinstance(raw, str):
+        return None
+    stripped = raw.strip()[:10]
+    try:
+        datetime.strptime(stripped, "%Y-%m-%d")
+        return stripped
+    except (ValueError, IndexError):
+        return None
+
+
+def _trunc(val: Any, maxlen: int) -> str | None:
+    """Trunca un valor string a maxlen caracteres, o None si es vacío."""
+    if not val:
+        return None
+    s = str(val).strip()
+    return s[:maxlen] if s else None
+
+
+def write_aircraft_gold(aircraft_list: list[dict[str, Any]]) -> int:
+    """Upsert de aeronaves en gold.aircraft.
+
+    Cada documento se identifica por ``icao24``.
+    Si ya existe, se actualizan los metadatos.
+
+    Args:
+        aircraft_list: Lista de dicts con al menos ``icao24``.
+
+    Returns:
+        Número de filas insertadas/actualizadas.
+    """
+    if not aircraft_list:
+        return 0
+    conn = _get_conn()
+    n = 0
+    with conn.cursor() as cur:
+        for doc in aircraft_list:
+            cur.execute(
+                """INSERT INTO gold.aircraft
+                (icao24, typecode, manufacturer, operator,
+                 first_flight_date, icao_aircraft_type, registration, serial_number)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (icao24) DO UPDATE SET
+                    typecode           = EXCLUDED.typecode,
+                    manufacturer       = EXCLUDED.manufacturer,
+                    operator           = EXCLUDED.operator,
+                    first_flight_date  = EXCLUDED.first_flight_date,
+                    icao_aircraft_type = EXCLUDED.icao_aircraft_type,
+                    registration       = EXCLUDED.registration,
+                    serial_number      = EXCLUDED.serial_number,
+                    tracked            = NOW()
+                """,
+                (
+                    doc.get("icao24", ""),
+                    _trunc(doc.get("typecode"), 30),
+                    _trunc(doc.get("manufacturer"), 150),
+                    _trunc(doc.get("operator"), 100),
+                    _parse_aircraft_date(doc.get("first_flight_date")),
+                    _trunc(doc.get("icao_aircraft_type"), 10),
+                    _trunc(doc.get("registration"), 20),
+                    _trunc(doc.get("serial_number"), 50),
+                ),
+            )
+            n += 1
+    conn.commit()
+    logger.info("Gold aircraft: %d upsertados", n)
+    return n
+
+
+def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
+    """Inserta datos meteorológicos en gold.weather.
+
+    Args:
+        weather_list: Lista de dicts con datos horarios.
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not weather_list:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    for doc in weather_list:
+        rows.append((
+            doc.get("airport_code"),
+            doc.get("timestamp"),
+            doc.get("flight_date"),
+            doc.get("temperature_2m"),
+            doc.get("precipitation"),
+            doc.get("wind_speed_10m"),
+            doc.get("wind_gusts_10m"),
+            doc.get("visibility"),
+            doc.get("cloud_cover"),
+            doc.get("relative_humidity_2m"),
+        ))
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.weather
+            (airport_code, timestamp, flight_date,
+             temperature_2m, precipitation, wind_speed_10m,
+             wind_gusts_10m, visibility, cloud_cover, relative_humidity_2m)
+            VALUES %s
+            ON CONFLICT (id) DO NOTHING
+            """,
+            rows,
+            template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s)",
+            page_size=500,
+        )
+        n = cur.rowcount
+    conn.commit()
+    logger.info("Gold weather: %d filas insertadas", len(rows))
+    return len(rows)
 
 
 # ===================================================================
