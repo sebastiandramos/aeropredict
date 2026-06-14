@@ -416,7 +416,7 @@ def _trunc(val: Any, maxlen: int) -> str | None:
 
 
 def write_aircraft_gold(aircraft_list: list[dict[str, Any]]) -> int:
-    """Upsert de aeronaves en gold.aircraft.
+    """Upsert de aeronaves en gold.aircraft (batch via execute_values).
 
     Cada documento se identifica por ``icao24``.
     Si ya existe, se actualizan los metadatos.
@@ -429,40 +429,45 @@ def write_aircraft_gold(aircraft_list: list[dict[str, Any]]) -> int:
     """
     if not aircraft_list:
         return 0
+
+    rows: list[tuple[Any, ...]] = []
+    for doc in aircraft_list:
+        rows.append((
+            _trunc(doc.get("icao24"), 12) or "",
+            _trunc(doc.get("typecode"), 30),
+            _trunc(doc.get("manufacturer"), 150),
+            _trunc(doc.get("operator"), 100),
+            _parse_aircraft_date(doc.get("first_flight_date")),
+            _trunc(doc.get("icao_aircraft_type"), 20),
+            _trunc(doc.get("registration"), 20),
+            _trunc(doc.get("serial_number"), 50),
+        ))
+
     conn = _get_conn()
-    n = 0
     with conn.cursor() as cur:
-        for doc in aircraft_list:
-            cur.execute(
-                """INSERT INTO gold.aircraft
-                (icao24, typecode, manufacturer, operator,
-                 first_flight_date, icao_aircraft_type, registration, serial_number)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (icao24) DO UPDATE SET
-                    typecode           = EXCLUDED.typecode,
-                    manufacturer       = EXCLUDED.manufacturer,
-                    operator           = EXCLUDED.operator,
-                    first_flight_date  = EXCLUDED.first_flight_date,
-                    icao_aircraft_type = EXCLUDED.icao_aircraft_type,
-                    registration       = EXCLUDED.registration,
-                    serial_number      = EXCLUDED.serial_number,
-                    tracked            = NOW()
-                """,
-                (
-                    _trunc(doc.get("icao24"), 12) or "",
-                    _trunc(doc.get("typecode"), 30),
-                    _trunc(doc.get("manufacturer"), 150),
-                    _trunc(doc.get("operator"), 100),
-                    _parse_aircraft_date(doc.get("first_flight_date")),
-                    _trunc(doc.get("icao_aircraft_type"), 20),
-                    _trunc(doc.get("registration"), 20),
-                    _trunc(doc.get("serial_number"), 50),
-                ),
-            )
-            n += 1
+        execute_values(
+            cur,
+            """INSERT INTO gold.aircraft
+            (icao24, typecode, manufacturer, operator,
+             first_flight_date, icao_aircraft_type, registration, serial_number)
+            VALUES %s
+            ON CONFLICT (icao24) DO UPDATE SET
+                typecode           = EXCLUDED.typecode,
+                manufacturer       = EXCLUDED.manufacturer,
+                operator           = EXCLUDED.operator,
+                first_flight_date  = EXCLUDED.first_flight_date,
+                icao_aircraft_type = EXCLUDED.icao_aircraft_type,
+                registration       = EXCLUDED.registration,
+                serial_number      = EXCLUDED.serial_number,
+                tracked            = NOW()
+            """,
+            rows,
+            template="(%s, %s, %s, %s, %s::date, %s, %s, %s)",
+            page_size=500,
+        )
     conn.commit()
-    logger.info("Gold aircraft: %d upsertados", n)
-    return n
+    logger.info("Gold aircraft: %d upsertados", len(rows))
+    return len(rows)
 
 
 def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
