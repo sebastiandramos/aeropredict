@@ -100,16 +100,20 @@ CREATE INDEX IF NOT EXISTS idx_flights_icao24_date ON gold.flights (icao24, flig
 CREATE INDEX IF NOT EXISTS idx_flights_date ON gold.flights (flight_date);
 
 CREATE TABLE IF NOT EXISTS gold.aircraft (
-    icao24              VARCHAR(10) NOT NULL PRIMARY KEY,
+    icao24              VARCHAR(12) NOT NULL PRIMARY KEY,
     typecode            VARCHAR(30),
     manufacturer        VARCHAR(150),
     operator            VARCHAR(100),
     first_flight_date   DATE,
-    icao_aircraft_type  VARCHAR(10),
+    icao_aircraft_type  VARCHAR(20),
     registration        VARCHAR(20),
     serial_number       VARCHAR(50),
     tracked             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migración: ampliar columnas en tablas existentes
+ALTER TABLE gold.aircraft ALTER COLUMN icao24 TYPE VARCHAR(12);
+ALTER TABLE gold.aircraft ALTER COLUMN icao_aircraft_type TYPE VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS gold.weather (
     id                  SERIAL PRIMARY KEY,
@@ -445,12 +449,12 @@ def write_aircraft_gold(aircraft_list: list[dict[str, Any]]) -> int:
                     tracked            = NOW()
                 """,
                 (
-                    doc.get("icao24", ""),
+                    _trunc(doc.get("icao24"), 12) or "",
                     _trunc(doc.get("typecode"), 30),
                     _trunc(doc.get("manufacturer"), 150),
                     _trunc(doc.get("operator"), 100),
                     _parse_aircraft_date(doc.get("first_flight_date")),
-                    _trunc(doc.get("icao_aircraft_type"), 10),
+                    _trunc(doc.get("icao_aircraft_type"), 20),
                     _trunc(doc.get("registration"), 20),
                     _trunc(doc.get("serial_number"), 50),
                 ),
