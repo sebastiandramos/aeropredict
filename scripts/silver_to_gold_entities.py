@@ -19,7 +19,6 @@ from pymongo import MongoClient
 
 from aeropredict.opensky.checkpoint_mongo import (
     add_to_checkpoint_set,
-    get_checkpoint_set,
 )
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import (
@@ -109,12 +108,12 @@ def _sync_entity(
     write_fn: Any,
     checkpoint_name: str,
 ) -> int:
-    """Sync una entidad desde MongoDB a Gold si el checkpoint lo indica."""
-    done = get_checkpoint_set(CHECKPOINT_COLLECTION)
-    if checkpoint_name in done:
-        logger.info("  %s: ya sincronizado (checkpoint). Usa --force para re-sync.", checkpoint_name)
-        return 0
+    """Sync una entidad desde MongoDB a Gold.
 
+    Siempre sincroniza (las funciones write usan ON CONFLICT / upsert,
+    por lo que es seguro re-ejecutar). El checkpoint se usa solo como
+    registro histórico, no para saltarse la sincronización.
+    """
     docs = list(mdb[collection].find({}, fields))
     logger.info("  %s: %d documentos", collection, len(docs))
     if docs:
