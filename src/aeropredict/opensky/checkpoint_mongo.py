@@ -35,7 +35,7 @@ def _connect() -> pymongo.database.Database[Any]:
 
 
 def _collection(name: str) -> Collection[Any]:
-    return _connect()["checkpoints"]
+    return _connect()[f"checkpoints_{name}"]
 
 
 # ── Diccionario fecha → lista ──────────────────────────────────────

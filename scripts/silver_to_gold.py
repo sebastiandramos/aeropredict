@@ -20,14 +20,19 @@ from typing import Any
 
 import pymongo
 
-from aeropredict.opensky.config import get_mongo_uri, get_postgres_uri
+from aeropredict.opensky.checkpoint_mongo import (
+    add_to_checkpoint_set,
+    get_checkpoint_set,
+)
+from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_gold import (
     write_flights_gold,
     close as close_gold,
-    _get_conn as get_gold_conn,
 )
+
+CHECKPOINT_COLLECTION = "silver_to_gold_dates"
 
 logger = logging.getLogger("silver_to_gold")
 
@@ -85,15 +90,15 @@ def _mongo_doc_to_flight(doc: dict[str, Any]) -> Flight | None:
 
 
 def _get_gold_dates() -> set[date_type]:
-    """Obtiene fechas ya procesadas en Gold."""
-    try:
-        conn = get_gold_conn()
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT flight_date FROM gold.daily_airport_traffic")
-            return {row[0] for row in cur.fetchall()}
-    except Exception as exc:
-        logger.warning("No se pudo consultar Gold (quizás tabla vacía): %s", exc)
-        return set()
+    """Obtiene fechas ya procesadas en Gold desde MongoDB checkpoint."""
+    raw = get_checkpoint_set(CHECKPOINT_COLLECTION)
+    result: set[date_type] = set()
+    for s in raw:
+        try:
+            result.add(date_type.fromisoformat(s))
+        except ValueError:
+            pass
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -192,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             logger.error("  Error escribiendo Gold para %s: %s", target_date, e)
             continue
+
+        # Checkpoint en MongoDB
+        add_to_checkpoint_set(CHECKPOINT_COLLECTION, target_date.isoformat())
 
         total_flights += len(flights)
         total_dates += 1

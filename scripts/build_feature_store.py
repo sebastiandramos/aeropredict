@@ -18,9 +18,15 @@ from typing import Any
 
 from pymongo import MongoClient
 
+from aeropredict.opensky.checkpoint_mongo import (
+    add_to_checkpoint_set,
+    get_checkpoint_set,
+)
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import _get_conn
 from aeropredict.sources.matcher import FlightScheduleMatcher
+
+CHECKPOINT_COLLECTION = "build_feature_store"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -326,9 +332,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build gold.feature_store")
     parser.add_argument("--reset", action="store_true", help="Drop y recreate table")
     parser.add_argument("--dry-run", action="store_true", help="Solo contar filas")
+    parser.add_argument("--force", action="store_true", help="Forzar rebuild aunque haya checkpoint")
     args = parser.parse_args()
 
-    build_feature_store(dry_run=args.dry_run, reset=args.reset)
+    # Checkpoint check
+    if not args.force and not args.reset:
+        done = get_checkpoint_set(CHECKPOINT_COLLECTION)
+        if "done" in done:
+            logger.info("Feature store ya construido (checkpoint). Usa --force o --reset para rebuild.")
+            return
+
+    n = build_feature_store(dry_run=args.dry_run, reset=args.reset)
+
+    if n > 0 and not args.dry_run:
+        add_to_checkpoint_set(CHECKPOINT_COLLECTION, "done")
+        logger.info("Checkpoint feature_store guardado.")
 
 
 if __name__ == "__main__":
