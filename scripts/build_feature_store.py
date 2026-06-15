@@ -18,10 +18,7 @@ from typing import Any
 
 from pymongo import MongoClient
 
-from aeropredict.opensky.checkpoint_mongo import (
-    add_to_checkpoint_set,
-    get_checkpoint_set,
-)
+from aeropredict.opensky.checkpoint_mongo import add_to_checkpoint_set
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import _get_conn
 from aeropredict.sources.matcher import FlightScheduleMatcher
@@ -334,13 +331,6 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Solo contar filas")
     parser.add_argument("--force", action="store_true", help="Forzar rebuild aunque haya checkpoint")
     args = parser.parse_args()
-
-    # Checkpoint check
-    if not args.force and not args.reset:
-        done = get_checkpoint_set(CHECKPOINT_COLLECTION)
-        if "done" in done:
-            logger.info("Feature store ya construido (checkpoint). Usa --force o --reset para rebuild.")
-            return
 
     n = build_feature_store(dry_run=args.dry_run, reset=args.reset)
 
