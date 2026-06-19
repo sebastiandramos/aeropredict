@@ -222,3 +222,4 @@ data/*
 !data/mock/
 !data/mock/**
 tmp/
+AGENTS.md

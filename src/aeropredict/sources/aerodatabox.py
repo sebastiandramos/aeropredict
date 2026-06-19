@@ -1,9 +1,12 @@
 """AeroDataBox API adapter for flight schedules.
 
-Documentación: https://aerodatabox.com/
-Acceso via API.Market (https://api.market/store/aedbx/aerodatabox).
-Free trial: 600 API units.
-Autenticación: header ``x-api-market-key``.
+Soporta dos proveedores:
+- **RapidAPI** (``aerodatabox.p.rapidapi.com``) — header ``x-rapidapi-key``
+- **API.Market** (``prod.api.market``) — header ``x-api-market-key``
+
+La key se auto-detecta por formato:
+- Keys RapidAPI contienen ``msh`` (ej. ``5f66f9d16dmsh...``)
+- Keys API.Market son alfanuméricas largas sin ``msh``
 """
 
 from __future__ import annotations
@@ -16,19 +19,33 @@ from aeropredict.sources.base import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://prod.api.market/api/v1/aedbx/aerodatabox"
+# RapidAPI (plane FREE/BASIC)
+RAPIDAPI_HOST = "aerodatabox.p.rapidapi.com"
+RAPIDAPI_BASE_URL = f"https://{RAPIDAPI_HOST}"
+
+# API.Market (credits-based)
+API_MARKET_BASE_URL = "https://prod.api.market/api/v1/aedbx/aerodatabox"
+
+
+def _is_rapidapi_key(key: str) -> bool:
+    """Detecta si la key es de RapidAPI (contiene 'msh')."""
+    return "msh" in key.lower()
 
 
 class AeroDataBoxAdapter(BaseAdapter):
-    """Adaptador para la API de AeroDataBox via API.Market.
+    """Adaptador para la API de AeroDataBox.
 
-    Key se pasa como header ``x-api-market-key``.
-    Endpoint usado: ``/flights/number/{callsign}/{dateLocal}`` (TIER 2).
+    Soporta RapidAPI y API.Market. La key se auto-detecta.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._api_key = get_aerodatabox_key()
+        self._use_rapidapi = _is_rapidapi_key(self._api_key) if self._api_key else False
+
+        if self._api_key:
+            provider = "RapidAPI" if self._use_rapidapi else "API.Market"
+            logger.info("AeroDataBox: usando %s", provider)
 
     # -- Método principal ---------------------------------------------------
 
@@ -47,8 +64,8 @@ class AeroDataBoxAdapter(BaseAdapter):
             return None
 
         date_part = flight_date[:10]
-        # Usar searchBy=callsign porque OpenSky devuelve ICAO callsigns (EJU37PQ)
-        endpoint = f"{BASE_URL}/flights/callsign/{callsign}/{date_part}"
+        endpoint = self._build_url(callsign, date_part)
+
         try:
             data = self._http_get(endpoint)
         except Exception as e:
@@ -60,10 +77,23 @@ class AeroDataBoxAdapter(BaseAdapter):
 
         return self._normalize(data, flight_date)
 
+    # -- URL builder --------------------------------------------------------
+
+    def _build_url(self, callsign: str, date_part: str) -> str:
+        """Construye la URL según el proveedor."""
+        if self._use_rapidapi:
+            return f"{RAPIDAPI_BASE_URL}/flights/callsign/{callsign}/{date_part}"
+        return f"{API_MARKET_BASE_URL}/flights/callsign/{callsign}/{date_part}"
+
+    # -- Headers por proveedor ----------------------------------------------
+
     def _get_headers(self) -> dict[str, str]:
-        return {
-            "x-api-market-key": self._api_key,
-        }
+        if self._use_rapidapi:
+            return {
+                "x-rapidapi-key": self._api_key,
+                "x-rapidapi-host": RAPIDAPI_HOST,
+            }
+        return {"x-api-market-key": self._api_key}
 
     @staticmethod
     def _normalize(

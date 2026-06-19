@@ -56,6 +56,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--days", type=int, default=1,
         help="Días hacia atrás a extraer (default: 1)",
     )
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="Re-extrae días con datos incompletos en Bronze (ignora checkpoint y cache)",
+    )
+    parser.add_argument(
+        "--start-date", type=str, default=None,
+        help="Fecha inicio para backfill (YYYY-MM-DD). Si se omite, usa la fecha más antigua en Bronze.",
+    )
     return parser.parse_args(argv)
 
 
@@ -63,6 +71,7 @@ def _extract_day(
     client: ClientPool,
     target_date: datetime.date,
     dry_run: bool,
+    force: bool = False,
 ) -> dict:
     """Extrae arrivals + departures para un día y escribe en Bronze.
 
@@ -80,7 +89,7 @@ def _extract_day(
     # Cargar checkpoint para saltar aeropuertos ya extraídos
     cp = get_checkpoint_dict(CHECKPOINT_COLLECTION)
     date_str = str(target_date)
-    already_extracted = set(cp.get(date_str, []))
+    already_extracted = set(cp.get(date_str, [])) if not force else set()
 
     for i, apt in enumerate(SPANISH_AIRPORT_CODES):
         if apt in already_extracted:
@@ -94,7 +103,7 @@ def _extract_day(
 
         if not dry_run:
             # --- Arrivals ---
-            if is_airport_empty(delta_root, apt, target_date, "arrivals"):
+            if not force and is_airport_empty(delta_root, apt, target_date, "arrivals"):
                 logger.info("  %s: arrivals vacío (cache), saltando", apt)
             else:
                 try:
@@ -112,7 +121,7 @@ def _extract_day(
                     errors.append({"airport": apt, "error": f"arrivals: {err}"})
 
             # --- Departures ---
-            if is_airport_empty(delta_root, apt, target_date, "departures"):
+            if not force and is_airport_empty(delta_root, apt, target_date, "departures"):
                 logger.info("  %s: departures vacío (cache), saltando", apt)
             else:
                 try:
@@ -144,6 +153,39 @@ def _extract_day(
     }
 
 
+def _get_bronze_dates(delta_root: str) -> list[str]:
+    """Get sorted list of dates with data in Bronze."""
+    from deltalake import DeltaTable
+
+    table_uri = f"{delta_root}/bronze/opensky"
+    try:
+        dt = DeltaTable(table_uri)
+    except Exception:
+        return []
+    table = dt.to_pyarrow_table(columns=["ingestion_date"])
+    dates = sorted(set(str(d) for d in table.column("ingestion_date").to_pylist()))
+    return dates
+
+
+def _count_bronze_rows(delta_root: str, date_str: str) -> int:
+    """Count rows in Bronze for a specific date."""
+    from deltalake import DeltaTable
+    import pyarrow.compute as pc
+
+    table_uri = f"{delta_root}/bronze/opensky"
+    try:
+        dt = DeltaTable(table_uri)
+        table = dt.to_pyarrow_table(columns=["ingestion_date", "endpoint"])
+    except Exception:
+        return 0
+    from datetime import date as date_type
+    y, m, d = map(int, date_str.split("-"))
+    target = date_type(y, m, d)
+    mask = pc.equal(table.column("ingestion_date"), target)
+    filtered = table.filter(mask)
+    return len(filtered)
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_daily_logger()
     args = _parse_args(argv)
@@ -152,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("=" * 60)
     logger.info("Script 1/3: Extract → Bronze")
     logger.info("Dry-run: %s | Days: %d | Delta root: %s", args.dry_run, args.days, delta_root)
+    if args.backfill:
+        logger.info("Mode: BACKFill (re-extract incomplete dates + fill missing dates, ignore checkpoint)")
     logger.info("=" * 60)
 
     client: ClientPool | None = None
@@ -174,26 +218,98 @@ def main(argv: list[str] | None = None) -> int:
     dates_done: list[str] = []
 
     now_utc = datetime.now(UTC)
-    for offset in range(1, args.days + 1):
-        target_date = (now_utc - timedelta(days=offset)).date()
-        logger.info("--- Día %s (D-%d) ---", target_date, offset)
 
-        if args.dry_run:
-            logger.info(
-                "DRY RUN: extraería %d aeropuertos para %s",
-                len(SPANISH_AIRPORT_CODES), target_date,
-            )
-            dates_done.append(str(target_date))
-            total_airports += len(SPANISH_AIRPORT_CODES)
-            continue
+    if args.backfill:
+        # Backfill mode: re-extract incomplete dates AND missing dates
+        bronze_dates = set(_get_bronze_dates(delta_root))
+        # Checkpoint: which airports are done per date
+        cp = get_checkpoint_dict(CHECKPOINT_COLLECTION)
 
-        result = _extract_day(client, target_date, dry_run=False)
-        dates_done.append(result["date"])
-        total_airports += result["airports"]
-        all_errors.extend(result["errors"])
+        # Determine date range
+        if args.start_date:
+            start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+        elif bronze_dates:
+            start_date = min(datetime.strptime(d, "%Y-%m-%d").date() for d in bronze_dates)
+        else:
+            start_date = (now_utc - timedelta(days=30)).date()
 
-        if result["airports_done"]:
-            save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
+        end_date = (now_utc - timedelta(days=1)).date()
+
+        # Generate all dates in range
+        all_dates = []
+        current = start_date
+        while current <= end_date:
+            all_dates.append(current)
+            current += timedelta(days=1)
+
+        logger.info("Rango backfill: %s a %s (%d días)", start_date, end_date, len(all_dates))
+        logger.info("Bronze tiene %d fechas, faltan %d fechas nuevas",
+                     len(bronze_dates), len([d for d in all_dates if str(d) not in bronze_dates]))
+
+        # Process dates newest → oldest
+        for target_date in reversed(all_dates):
+            date_str = str(target_date)
+
+            if date_str not in bronze_dates:
+                # Missing date: extract all 32 airports
+                logger.info("  %s: AUSENTE en Bronze — extrayendo todos los aeropuertos", date_str)
+                missing = set(SPANISH_AIRPORT_CODES)
+            else:
+                # Existing date: check completeness
+                row_count = _count_bronze_rows(delta_root, date_str)
+                cp_airports = set(cp.get(date_str, []))
+                missing = set(SPANISH_AIRPORT_CODES) - cp_airports
+
+                # Skip only if: enough rows AND checkpoint complete
+                if len(missing) == 0 and row_count >= 1000:
+                    logger.info("  %s: %d rows, %d/%d airports — completo, saltando",
+                                date_str, row_count, len(cp_airports), len(SPANISH_AIRPORT_CODES))
+                    continue
+
+                # If checkpoint says complete but too few rows → force all 32 airports
+                if len(missing) == 0 and row_count < 1000:
+                    logger.info("  %s: %d rows pero checkpoint dice completo — forzando re-extracción",
+                                date_str, row_count)
+                    missing = set(SPANISH_AIRPORT_CODES)
+                else:
+                    logger.info("  %s: %d rows, checkpoint=%d/%d airports, faltan=%d — REEXTRAER",
+                                date_str, row_count, len(cp_airports), len(SPANISH_AIRPORT_CODES), len(missing))
+
+            if args.dry_run:
+                logger.info("  DRY RUN: extraería %d aeropuertos para %s", len(missing), date_str)
+                dates_done.append(date_str)
+                total_airports += len(missing)
+                continue
+
+            result = _extract_day(client, target_date, dry_run=False, force=True)
+            dates_done.append(result["date"])
+            total_airports += result["airports"]
+            all_errors.extend(result["errors"])
+
+            if result["airports_done"]:
+                save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
+    else:
+        # Normal mode: extract last N days
+        for offset in range(1, args.days + 1):
+            target_date = (now_utc - timedelta(days=offset)).date()
+            logger.info("--- Día %s (D-%d) ---", target_date, offset)
+
+            if args.dry_run:
+                logger.info(
+                    "DRY RUN: extraería %d aeropuertos para %s",
+                    len(SPANISH_AIRPORT_CODES), target_date,
+                )
+                dates_done.append(str(target_date))
+                total_airports += len(SPANISH_AIRPORT_CODES)
+                continue
+
+            result = _extract_day(client, target_date, dry_run=False)
+            dates_done.append(result["date"])
+            total_airports += result["airports"]
+            all_errors.extend(result["errors"])
+
+            if result["airports_done"]:
+                save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
 
     elapsed = time.time() - start
 

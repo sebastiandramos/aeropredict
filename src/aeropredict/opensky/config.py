@@ -249,24 +249,35 @@ def get_postgres_uri() -> str:
 
 
 def get_aviationstack_api_key() -> str:
-    """API key de AviationStack (free tier: 100 req/mes)."""
-    return os.environ.get("AVIATIONSTACK_API_KEY", "")
+    """API key de AviationStack (free tier: 100 req/mes).
+
+    Busca AVIATIONSTACK_API_KEY primero, luego AVIATIONSTACK_TOCKEN_PABLO
+    (typo en Doppler), y finalmente cualquier AVIATIONSTACK_TOCKEN_*.
+    """
+    key = os.environ.get("AVIATIONSTACK_API_KEY", "")
+    if key:
+        return key
+    # Fallback: suffixed token (e.g. AVIATIONSTACK_TOCKEN_PABLO)
+    for env_name, val in os.environ.items():
+        if env_name.startswith("AVIATIONSTACK_TOCKEN_") and val.strip():
+            return val.strip()
+    return ""
 
 
 def get_aviationstack_keys() -> list[str]:
     """Descubre todas las AviationStack API keys con patrón de sufijo.
 
-    Busca ``AVIATIONSTACK_API_KEY_{NAME}`` además de la variable base.
-    Útil para Pool rotation entre múltiples cuentas.
+    Busca ``AVIATIONSTACK_API_KEY_{NAME}`` y ``AVIATIONSTACK_TOCKEN_{NAME}``
+    además de la variable base. Útil para Pool rotation entre múltiples cuentas.
     """
     keys: list[str] = []
     base = os.environ.get("AVIATIONSTACK_API_KEY")
     if base:
         keys.append(base)
-    prefix = "AVIATIONSTACK_API_KEY_"
-    for key, value in os.environ.items():
-        if key.startswith(prefix) and value and value not in keys:
-            keys.append(value)
+    for prefix in ("AVIATIONSTACK_API_KEY_", "AVIATIONSTACK_TOCKEN_"):
+        for key, value in os.environ.items():
+            if key.startswith(prefix) and value and value not in keys:
+                keys.append(value)
     return keys
 
 

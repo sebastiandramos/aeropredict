@@ -57,7 +57,7 @@ def write_to_r2(table_name: str, data: pa.Table, prefix: str) -> None:
         write_deltalake(
             r2_path,
             data,
-            mode="overwrite",
+            mode="append",
             storage_options=STORAGE_OPTIONS,
         )
         logger.info("  Escritas %d filas en %s", len(data), r2_path)
