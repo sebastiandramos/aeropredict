@@ -43,6 +43,10 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e .
       - uses: dopplerhq/cli-action@v3
+      - name: Debug - listar secrets disponibles
+        run: doppler run -- env | grep OPENSKY | sed 's/=.*/=***/'
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       - name: Extraer OpenSky → Bronze Delta (R2)
         run: doppler run -- python scripts/extract_to_bronze.py --days 2
         env:
