@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from time import perf_counter
 
 import mlflow
@@ -18,6 +19,8 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 from .models import (
     DelayPredictionRequest,
     DelayPredictionResponse,
+    ETAPredictionRequest,
+    ETAPredictionResponse,
     HealthResponse,
 )
 
@@ -193,6 +196,87 @@ async def predict_delay(
         raise
     except Exception as exc:
         LOGGER.exception("Error during prediction: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+@app.post("/predict/eta", response_model=ETAPredictionResponse)
+async def predict_eta(
+    request: Request,
+    response: Response,
+    payload: ETAPredictionRequest,
+) -> ETAPredictionResponse:
+    """Predict ETA given a scheduled arrival and flight features.
+
+    Computes ETA = scheduled_arrival + predicted_delay.
+    If delay > 240 minutes, marks ``disruption_likely = True``.
+    """
+    start_ts = perf_counter()
+    model = getattr(app.state, "model", None)
+    # check model loaded
+    if model is None:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        LOGGER.warning("/predict/eta called but model not loaded")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model not loaded",
+        )
+
+    # prepare features: payload.features -> dict -> single-row DataFrame
+    try:
+        features_dict = payload.features.model_dump()
+        df = pd.DataFrame([features_dict])
+
+        # call model.predict - mlflow pyfunc expects DataFrame
+        pred = model.predict(df)
+        if hasattr(pred, "__len__") and len(pred) > 0:
+            pred_val = float(pred[0])
+        else:
+            pred_val = float(pred)
+
+        predicted_delay = pred_val
+        delay_timedelta = timedelta(minutes=predicted_delay)
+        eta = payload.scheduled_arrival + delay_timedelta
+        disruption_likely = predicted_delay > 240
+
+        duration_ms = (perf_counter() - start_ts) * 1000.0
+
+        # log the prediction
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+        except Exception:
+            client_ip = "unknown"
+        LOGGER.info(
+            "/predict/eta: scheduled=%s features=%s "
+            "predicted_delay=%.3f eta=%s "
+            "disruption=%s duration_ms=%.2f client=%s",
+            payload.scheduled_arrival,
+            features_dict,
+            predicted_delay,
+            eta,
+            disruption_likely,
+            duration_ms,
+            client_ip,
+        )
+
+        # ensure inference time recorded; promised <100ms for single prediction
+        if duration_ms > 100:
+            LOGGER.warning("Inference slow: %.2fms (>100ms)", duration_ms)
+
+        out = ETAPredictionResponse(
+            estimated_arrival_time=eta,
+            confidence=0.85,
+            delay_component=predicted_delay,
+            disruption_likely=disruption_likely,
+        )
+        response.status_code = status.HTTP_200_OK
+        return out
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.exception("Error during ETA prediction: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),

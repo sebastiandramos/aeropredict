@@ -51,6 +51,7 @@ class ETAPredictionResponse(BaseModel):
     estimated_arrival_time: datetime
     confidence: float
     delay_component: float
+    disruption_likely: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
