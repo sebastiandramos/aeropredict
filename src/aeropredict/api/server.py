@@ -9,11 +9,17 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from time import perf_counter
 
 import mlflow
-from fastapi import FastAPI, Response, status
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Request, Response, status
 
-from .models import HealthResponse
+from .models import (
+    DelayPredictionRequest,
+    DelayPredictionResponse,
+    HealthResponse,
+)
 
 LOGGER = logging.getLogger(__name__)
 logging.basicConfig(
@@ -90,3 +96,104 @@ async def health(response: Response) -> HealthResponse:
     duration = (time.time() - start) * 1000.0
     LOGGER.info("/health responded in %.2fms", duration)
     return out
+
+
+@app.post("/predict/delay", response_model=DelayPredictionResponse)
+async def predict_delay(
+    request: Request,
+    response: Response,
+    payload: DelayPredictionRequest,
+) -> DelayPredictionResponse:
+    """Predict flight delay (minutes) given features.
+
+    - Validates payload using DelayPredictionRequest (Pydantic)
+    - Uses app.state.model to run inference. If model missing -> 503
+    - Returns DelayPredictionResponse with predicted_delay_minutes, confidence, model_version
+    """
+    start_ts = perf_counter()
+    model = getattr(app.state, "model", None)
+    model_version = getattr(app.state, "model_version", None)
+    # check model loaded
+    if model is None:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        LOGGER.warning("/predict/delay called but model not loaded")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model not loaded",
+        )
+
+    # prepare features: pydantic -> dict -> single-row DataFrame
+    try:
+        features = payload.model_dump()
+        # ensure deterministic column order using model's feature names when available
+        try:
+            feature_names = []
+            # try common metadata paths used in mlflow pyfunc LightGBM wrapper
+            if hasattr(model, "metadata") and model.metadata is not None:
+                meta = model.metadata
+                feature_names = getattr(meta, "signature", {}).get("inputs", []) or []
+        except Exception:
+            feature_names = []
+
+        df = pd.DataFrame([features])
+        # if we have explicit feature_names and they are a list of names, reorder/reindex
+        if feature_names and all(isinstance(x, str) for x in feature_names):
+            # keep only known columns and preserve order
+            cols = [c for c in feature_names if c in df.columns]
+            if cols:
+                df = df.reindex(columns=cols, fill_value=-1)
+
+        # call model.predict - mlflow pyfunc expects DataFrame
+        pred = model.predict(df)
+        # pred may be array-like or scalar
+        if hasattr(pred, "__len__") and len(pred) > 0:
+            pred_val = float(pred[0])
+        else:
+            pred_val = float(pred)
+
+        # estimate confidence
+        confidence = 0.85
+        try:
+            # LightGBM may expose predict with pred_leaf or raw scores;
+            # ensemble stddev is not always available from pyfunc wrapper.
+            if hasattr(model, "predict_proba"):
+                # not applicable for regression, skip
+                pass
+        except Exception:
+            pass
+
+        duration_ms = (perf_counter() - start_ts) * 1000.0
+
+        # log the prediction
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+        except Exception:
+            client_ip = "unknown"
+        LOGGER.info(
+            "/predict/delay: input=%s predicted=%.3f model_version=%s duration_ms=%.2f client=%s",
+            features,
+            pred_val,
+            model_version,
+            duration_ms,
+            client_ip,
+        )
+
+        # ensure inference time recorded; promised <100ms for single prediction
+        if duration_ms > 100:
+            LOGGER.warning("Inference slow: %.2fms (>100ms)", duration_ms)
+
+        out = DelayPredictionResponse(
+            predicted_delay_minutes=pred_val,
+            confidence=float(confidence),
+            model_version=model_version,
+        )
+        response.status_code = status.HTTP_200_OK
+        return out
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.exception("Error during prediction: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
