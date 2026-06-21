@@ -223,3 +223,13 @@ data/*
 !data/mock/**
 tmp/
 AGENTS.md
+
+# Temporal / debug scripts (ad-hoc, no forman parte de la pipeline)
+check_*.py
+_check_*.py
+_status.py
+save_*.py
+fetch_*.py
+test_*.py
+AeroPredict_Balance_Anio_0.xlsx
+scripts/compact_delta.py
