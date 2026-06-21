@@ -119,9 +119,13 @@ def _read_bronze_flights(
     parse_errors = 0
     start = time.time()
 
-    for i in range(table.num_rows):
-        row = table.slice(i, 1).to_pydict()
-        response_str = row["response"][0]
+    # Vectorized: convert entire table to dict of lists once (O(n) instead of O(n²))
+    columns = table.to_pydict()
+    responses = columns["response"]
+    num_rows = len(responses)
+
+    for i in range(num_rows):
+        response_str = responses[i]
         if not response_str:
             continue
 

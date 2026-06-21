@@ -46,9 +46,9 @@ class AviationStackAdapter(BaseAdapter):
         }
 
         if self.pool:
-            # Usar Pool para rotar API keys
+            # Usar Pool para rotar API keys — pasar key activa al lambda
             return self.pool.execute(
-                lambda: self._query_with_key(params),
+                lambda key: self._query_with_key({**params, "access_key": key}),
             )
 
         # Sin pool — usar API key directa

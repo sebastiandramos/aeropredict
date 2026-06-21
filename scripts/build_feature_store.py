@@ -239,8 +239,11 @@ def build_feature_store(
         ff_date = ac.get("first_flight_date")
         if ff_date and isinstance(first_seen, datetime):
             try:
-                ff = datetime.strptime(str(ff_date)[:10], "%Y-%m-%d")
-                ac_age = round((first_seen - ff.replace(tzinfo=UTC)).days / 365.25, 1)
+                ff_date_str = str(ff_date)[:10]
+                ff = datetime.strptime(ff_date_str, "%Y-%m-%d")
+                # Ensure first_seen is timezone-naive for comparison
+                fs_naive = first_seen.replace(tzinfo=None) if first_seen.tzinfo else first_seen
+                ac_age = round((fs_naive - ff).days / 365.25, 1)
             except (ValueError, TypeError):
                 pass
 

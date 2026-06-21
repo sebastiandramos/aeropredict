@@ -41,8 +41,6 @@ except ImportError as exc:
 # Helpers de ruta (local y S3)
 # ===================================================================
 
-_LOCAL_ROOT = "data/raw"
-
 
 def _is_cloud_uri(uri: str) -> bool:
     """``True`` si la URI apunta a cloud (S3, R2, Azure)."""
@@ -181,8 +179,13 @@ def write_raw(
         base_path: Ruta base de datos.
 
     Returns:
-        Número de filas escritas (1 por petición).
+        Número de filas escritas (1 por petición, 0 si la respuesta está vacía).
     """
+    # Skip empty responses to avoid polluting Bronze with useless rows
+    if not response_data:
+        logger.info("Bronce: respuesta vacía para %s, saltando", endpoint)
+        return 0
+
     table_uri = _build_table_uri(base_path, "bronze", "opensky")
     now = datetime.now(UTC)
     ingestion_date = now.date()

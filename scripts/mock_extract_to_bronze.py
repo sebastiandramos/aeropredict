@@ -95,7 +95,7 @@ def generate_samples(mock_dir: Path, days: int = 1) -> None:
                 except (json.JSONDecodeError, TypeError):
                     continue
                 airport = params.get("airport")
-                endpoint = str(row.get("endpoint", "")).lstrip("/flights/")
+                endpoint = str(row.get("endpoint", "")).removeprefix("/flights/")
                 if not airport or endpoint not in ("arrivals", "departures"):
                     continue
                 try:

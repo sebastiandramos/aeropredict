@@ -33,7 +33,8 @@ LOCAL_ROOT = str(Path("data/raw"))
 
 TABLES_TO_SYNC: list[str] = [
     "bronze/opensky",
-    "bronze/schedules",
+    "bronze/schedules_aviationstack",
+    "bronze/schedules_aerodatabox",
     "bronze/weather",
     "silver/flights",
     "silver/state_vectors",

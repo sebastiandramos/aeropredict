@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS gold.flights (
     arrival_airport_vert_distance    FLOAT,
     departure_airport_candidates_count INTEGER,
     arrival_airport_candidates_count   INTEGER,
-    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (icao24, flight_date, first_seen)
 );
 
 CREATE INDEX IF NOT EXISTS idx_flights_icao24_date ON gold.flights (icao24, flight_date);
@@ -127,7 +128,8 @@ CREATE TABLE IF NOT EXISTS gold.weather (
     visibility          FLOAT,
     cloud_cover         FLOAT,
     relative_humidity_2m FLOAT,
-    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (airport_code, timestamp)
 );
 
 CREATE INDEX IF NOT EXISTS idx_weather_airport_date ON gold.weather (airport_code, flight_date);
@@ -381,7 +383,7 @@ def write_flights_gold_raw(flight_docs: list[dict[str, Any]]) -> int:
              arrival_airport_horiz_distance, arrival_airport_vert_distance,
              departure_airport_candidates_count, arrival_airport_candidates_count)
             VALUES %s
-            ON CONFLICT (id) DO NOTHING
+            ON CONFLICT (icao24, flight_date, first_seen) DO NOTHING
             """,
             rows,
             template=(
@@ -506,7 +508,7 @@ def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
              temperature_2m, precipitation, wind_speed_10m,
              wind_gusts_10m, visibility, cloud_cover, relative_humidity_2m)
             VALUES %s
-            ON CONFLICT (id) DO NOTHING
+            ON CONFLICT (airport_code, timestamp) DO NOTHING
             """,
             rows,
             template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s)",
