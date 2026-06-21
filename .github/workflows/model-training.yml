@@ -1,0 +1,59 @@
+name: Weekly ML model training
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'   # Sunday 00:00 UTC weekly
+  workflow_dispatch: {}
+
+concurrency:
+  group: ml-model-training
+  cancel-in-progress: false
+
+env:
+  OPENSKY_DELTA_ROOT: ${{ secrets.OPENSKY_DELTA_ROOT }}
+  MONGODB_URI: ${{ secrets.MONGODB_URI }}
+  POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
+
+jobs:
+  train:
+    name: Weekly model training
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Export ML dataset
+        run: python scripts/export_ml_dataset.py --output data/processed/feature_store.parquet
+        continue-on-error: false
+
+      - name: Feature analysis / select features
+        run: python scripts/feature_analysis.py --mock-rows 1000
+        continue-on-error: false
+
+      - name: Construct target
+        run: python scripts/construct_target.py --output data/processed/dataset_with_target.parquet --mock-rows 1000
+        continue-on-error: false
+
+      - name: Split dataset
+        run: python scripts/split_dataset.py --input data/processed/dataset_with_target.parquet --output-dir data/processed --mock --mock-rows 1000
+        continue-on-error: false
+
+      - name: Train baseline model
+        run: python scripts/train_baseline.py --data-dir data/processed --output-dir models
+        continue-on-error: false
+
+      - name: Hyperparameter sweep (Optuna)
+        run: python scripts/hpo_sweep.py --data-dir data/processed --output-dir models --trials 20
+        continue-on-error: false
+
+      - name: Register model in MLflow (Production)
+        run: python scripts/register_model.py --stage Production
+        continue-on-error: false
