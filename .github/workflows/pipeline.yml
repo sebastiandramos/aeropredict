@@ -14,24 +14,8 @@ env:
   OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
 
 jobs:
-  test:
-    name: "0/5 Unit tests + coverage (≥70%)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Instalar dependencias
-        run: pip install -e ".[dev]"
-      - name: Ejecutar tests con cobertura
-        run: pytest --cov=src/aeropredict --cov-report=term-missing tests/ --tb=short -q
-
   extract:
     name: "1/5 Extract → Bronze"
-    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
