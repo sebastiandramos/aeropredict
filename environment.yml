@@ -1,0 +1,44 @@
+name: aeropredict
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+
+  # Data manipulation
+  - numpy
+  - pandas
+
+  # Delta Lake
+  - deltalake
+
+  # HTTP client
+  - requests
+
+  # CLI
+  - click
+
+  # Jupyter
+  - jupyter
+  - ipykernel
+
+  # Visualization
+  - matplotlib
+  - seaborn
+
+  # ML (básico)
+  - scikit-learn
+
+  # Projects & config
+  - python-dotenv
+
+  # Testing
+  - pytest
+
+  # Linting
+  - ruff
+
+  # pip packages not in conda-forge
+  - pip:
+    - pyarrow-stubs  # type hints for pyarrow

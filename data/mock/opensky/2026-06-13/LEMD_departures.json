@@ -1,0 +1,826 @@
+[
+  {
+    "icao24": "344f97",
+    "firstSeen": 1781337598,
+    "lastSeen": 1781348475,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "AEA6890"
+  },
+  {
+    "icao24": "344fff",
+    "firstSeen": 1781366685,
+    "lastSeen": 1781375616,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "IBE3028"
+  },
+  {
+    "icao24": "344fa1",
+    "firstSeen": 1781349562,
+    "lastSeen": 1781358541,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "EZY8543"
+  },
+  {
+    "icao24": "344f1a",
+    "firstSeen": 1781311352,
+    "lastSeen": 1781321215,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "WZZ826"
+  },
+  {
+    "icao24": "344f97",
+    "firstSeen": 1781335760,
+    "lastSeen": 1781343829,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "EZY6173"
+  },
+  {
+    "icao24": "344fad",
+    "firstSeen": 1781357575,
+    "lastSeen": 1781367685,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "WZZ9320"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781324654,
+    "lastSeen": 1781335186,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "AEA9806"
+  },
+  {
+    "icao24": "344f48",
+    "firstSeen": 1781390444,
+    "lastSeen": 1781398869,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "AEA8581"
+  },
+  {
+    "icao24": "344f48",
+    "firstSeen": 1781366527,
+    "lastSeen": 1781377967,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "EZY9980"
+  },
+  {
+    "icao24": "344f7d",
+    "firstSeen": 1781363862,
+    "lastSeen": 1781368849,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "VLG748"
+  },
+  {
+    "icao24": "344f84",
+    "firstSeen": 1781333285,
+    "lastSeen": 1781343610,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "EZY3402"
+  },
+  {
+    "icao24": "345030",
+    "firstSeen": 1781322077,
+    "lastSeen": 1781328084,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "IBE1641"
+  },
+  {
+    "icao24": "34501d",
+    "firstSeen": 1781325963,
+    "lastSeen": 1781331466,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LPPT",
+    "callsign": "IBS7428"
+  },
+  {
+    "icao24": "345030",
+    "firstSeen": 1781315387,
+    "lastSeen": 1781326257,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "EZY4298"
+  },
+  {
+    "icao24": "344f48",
+    "firstSeen": 1781340044,
+    "lastSeen": 1781342760,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "WZZ136"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781309907,
+    "lastSeen": 1781318945,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "IBE7849"
+  },
+  {
+    "icao24": "345012",
+    "firstSeen": 1781385052,
+    "lastSeen": 1781391296,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "IBS4388"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781327484,
+    "lastSeen": 1781337793,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCXO",
+    "callsign": "EZY8866"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781326480,
+    "lastSeen": 1781337841,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "EZY8078"
+  },
+  {
+    "icao24": "344f66",
+    "firstSeen": 1781360027,
+    "lastSeen": 1781366660,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "ANE7871"
+  },
+  {
+    "icao24": "344ff4",
+    "firstSeen": 1781367438,
+    "lastSeen": 1781374305,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "WZZ9024"
+  },
+  {
+    "icao24": "344f48",
+    "firstSeen": 1781316825,
+    "lastSeen": 1781330121,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "ANE9026"
+  },
+  {
+    "icao24": "344fad",
+    "firstSeen": 1781368651,
+    "lastSeen": 1781370917,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "ANE1958"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781326996,
+    "lastSeen": 1781335425,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCXO",
+    "callsign": "AEA1597"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781352157,
+    "lastSeen": 1781354083,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "IBE259"
+  },
+  {
+    "icao24": "344ff4",
+    "firstSeen": 1781389600,
+    "lastSeen": 1781393880,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "WZZ8102"
+  },
+  {
+    "icao24": "344fd6",
+    "firstSeen": 1781333723,
+    "lastSeen": 1781347688,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "VLG6576"
+  },
+  {
+    "icao24": "344ff4",
+    "firstSeen": 1781328409,
+    "lastSeen": 1781337914,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "ANE9037"
+  },
+  {
+    "icao24": "344f48",
+    "firstSeen": 1781357868,
+    "lastSeen": 1781361530,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LPPT",
+    "callsign": "RYR973"
+  },
+  {
+    "icao24": "344f15",
+    "firstSeen": 1781370430,
+    "lastSeen": 1781384323,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "EZY7523"
+  },
+  {
+    "icao24": "344f1a",
+    "firstSeen": 1781364549,
+    "lastSeen": 1781373786,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "IBS3018"
+  },
+  {
+    "icao24": "344f15",
+    "firstSeen": 1781390752,
+    "lastSeen": 1781401086,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "AEA706"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781318262,
+    "lastSeen": 1781322914,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "IBS3570"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781389990,
+    "lastSeen": 1781400654,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "ANE5915"
+  },
+  {
+    "icao24": "344f84",
+    "firstSeen": 1781323503,
+    "lastSeen": 1781329575,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "WZZ4335"
+  },
+  {
+    "icao24": "344f7d",
+    "firstSeen": 1781364262,
+    "lastSeen": 1781369773,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "WZZ6402"
+  },
+  {
+    "icao24": "344f84",
+    "firstSeen": 1781348341,
+    "lastSeen": 1781356658,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "ANE1522"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781346432,
+    "lastSeen": 1781350818,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "IBE9436"
+  },
+  {
+    "icao24": "344fff",
+    "firstSeen": 1781379389,
+    "lastSeen": 1781391950,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "RYR8110"
+  },
+  {
+    "icao24": "344f66",
+    "firstSeen": 1781357866,
+    "lastSeen": 1781362218,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "RYR9711"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781353436,
+    "lastSeen": 1781362002,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LPPT",
+    "callsign": "IBS3746"
+  },
+  {
+    "icao24": "344fa1",
+    "firstSeen": 1781387022,
+    "lastSeen": 1781390202,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "RYR1374"
+  },
+  {
+    "icao24": "344f66",
+    "firstSeen": 1781320022,
+    "lastSeen": 1781331024,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "AEA1587"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781332086,
+    "lastSeen": 1781337497,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "VLG6534"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781360179,
+    "lastSeen": 1781369878,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "RYR2930"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781337820,
+    "lastSeen": 1781344717,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "RYR7604"
+  },
+  {
+    "icao24": "344fff",
+    "firstSeen": 1781321050,
+    "lastSeen": 1781325101,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "RYR8323"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781332193,
+    "lastSeen": 1781346513,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "ANE7108"
+  },
+  {
+    "icao24": "34501d",
+    "firstSeen": 1781382356,
+    "lastSeen": 1781396080,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "IBE6250"
+  },
+  {
+    "icao24": "344f22",
+    "firstSeen": 1781388677,
+    "lastSeen": 1781402298,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "WZZ7424"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781379951,
+    "lastSeen": 1781385311,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "IBE4178"
+  },
+  {
+    "icao24": "344f22",
+    "firstSeen": 1781387453,
+    "lastSeen": 1781391735,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "IBE1283"
+  },
+  {
+    "icao24": "344fd6",
+    "firstSeen": 1781375622,
+    "lastSeen": 1781388741,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "IBS5647"
+  },
+  {
+    "icao24": "345012",
+    "firstSeen": 1781363714,
+    "lastSeen": 1781373227,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "VLG3615"
+  },
+  {
+    "icao24": "344f84",
+    "firstSeen": 1781380491,
+    "lastSeen": 1781392576,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCXO",
+    "callsign": "AEA6315"
+  },
+  {
+    "icao24": "345006",
+    "firstSeen": 1781310031,
+    "lastSeen": 1781318526,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "ANE4801"
+  },
+  {
+    "icao24": "344f3c",
+    "firstSeen": 1781324951,
+    "lastSeen": 1781329355,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "VLG6988"
+  },
+  {
+    "icao24": "34501d",
+    "firstSeen": 1781383041,
+    "lastSeen": 1781391270,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "AEA8949"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781390399,
+    "lastSeen": 1781392666,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "WZZ6967"
+  },
+  {
+    "icao24": "344fcf",
+    "firstSeen": 1781378162,
+    "lastSeen": 1781380608,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "RYR4007"
+  },
+  {
+    "icao24": "344f7d",
+    "firstSeen": 1781374159,
+    "lastSeen": 1781378996,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "IBE3386"
+  },
+  {
+    "icao24": "344fb8",
+    "firstSeen": 1781374646,
+    "lastSeen": 1781383490,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "IBE797"
+  },
+  {
+    "icao24": "344fff",
+    "firstSeen": 1781390275,
+    "lastSeen": 1781399777,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "WZZ7758"
+  },
+  {
+    "icao24": "344f97",
+    "firstSeen": 1781360981,
+    "lastSeen": 1781365639,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "RYR4940"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781335900,
+    "lastSeen": 1781343782,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "VLG1610"
+  },
+  {
+    "icao24": "344fb8",
+    "firstSeen": 1781350497,
+    "lastSeen": 1781360564,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LFPG",
+    "callsign": "AEA2391"
+  },
+  {
+    "icao24": "344f35",
+    "firstSeen": 1781322112,
+    "lastSeen": 1781325202,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "RYR3473"
+  },
+  {
+    "icao24": "344f2e",
+    "firstSeen": 1781345647,
+    "lastSeen": 1781356459,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "IBS7444"
+  },
+  {
+    "icao24": "344fcf",
+    "firstSeen": 1781330210,
+    "lastSeen": 1781342158,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EGLL",
+    "callsign": "VLG4343"
+  },
+  {
+    "icao24": "344f7d",
+    "firstSeen": 1781376479,
+    "lastSeen": 1781384218,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "WZZ4914"
+  },
+  {
+    "icao24": "344fa1",
+    "firstSeen": 1781312134,
+    "lastSeen": 1781314675,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "EZY5053"
+  },
+  {
+    "icao24": "344f97",
+    "firstSeen": 1781335295,
+    "lastSeen": 1781341924,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "WZZ6069"
+  },
+  {
+    "icao24": "345029",
+    "firstSeen": 1781383476,
+    "lastSeen": 1781387580,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "IBS1237"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781324017,
+    "lastSeen": 1781338121,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "IBS8790"
+  },
+  {
+    "icao24": "344f22",
+    "firstSeen": 1781342202,
+    "lastSeen": 1781356067,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "AEA759"
+  },
+  {
+    "icao24": "344f3c",
+    "firstSeen": 1781311653,
+    "lastSeen": 1781318528,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LPPT",
+    "callsign": "WZZ330"
+  },
+  {
+    "icao24": "344f35",
+    "firstSeen": 1781333763,
+    "lastSeen": 1781338472,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "ANE2858"
+  },
+  {
+    "icao24": "34501d",
+    "firstSeen": 1781381024,
+    "lastSeen": 1781387162,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "VLG2001"
+  },
+  {
+    "icao24": "344fd6",
+    "firstSeen": 1781353127,
+    "lastSeen": 1781362598,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "IBE4133"
+  },
+  {
+    "icao24": "345006",
+    "firstSeen": 1781389409,
+    "lastSeen": 1781403444,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCXO",
+    "callsign": "AEA3172"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781382940,
+    "lastSeen": 1781395251,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "EHAM",
+    "callsign": "AEA1599"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781322199,
+    "lastSeen": 1781335819,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LPPT",
+    "callsign": "WZZ1887"
+  },
+  {
+    "icao24": "344f15",
+    "firstSeen": 1781357302,
+    "lastSeen": 1781366704,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "WZZ4976"
+  },
+  {
+    "icao24": "344fd6",
+    "firstSeen": 1781385575,
+    "lastSeen": 1781398747,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "RYR2815"
+  },
+  {
+    "icao24": "344f66",
+    "firstSeen": 1781324962,
+    "lastSeen": 1781334127,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "EZY8171"
+  },
+  {
+    "icao24": "345029",
+    "firstSeen": 1781363552,
+    "lastSeen": 1781372893,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMG",
+    "callsign": "WZZ4602"
+  },
+  {
+    "icao24": "344fad",
+    "firstSeen": 1781382514,
+    "lastSeen": 1781396333,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "IBS3704"
+  },
+  {
+    "icao24": "344f35",
+    "firstSeen": 1781318803,
+    "lastSeen": 1781327035,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "RYR3767"
+  },
+  {
+    "icao24": "344f97",
+    "firstSeen": 1781382016,
+    "lastSeen": 1781393887,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "VLG1256"
+  },
+  {
+    "icao24": "344fe2",
+    "firstSeen": 1781325011,
+    "lastSeen": 1781330474,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEPA",
+    "callsign": "EZY7962"
+  },
+  {
+    "icao24": "345030",
+    "firstSeen": 1781350821,
+    "lastSeen": 1781357286,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "VLG475"
+  },
+  {
+    "icao24": "345012",
+    "firstSeen": 1781331804,
+    "lastSeen": 1781345322,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEIB",
+    "callsign": "IBS6470"
+  },
+  {
+    "icao24": "344f71",
+    "firstSeen": 1781316710,
+    "lastSeen": 1781329847,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEVC",
+    "callsign": "AEA2316"
+  },
+  {
+    "icao24": "34501d",
+    "firstSeen": 1781365017,
+    "lastSeen": 1781375497,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "AEA3817"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781331245,
+    "lastSeen": 1781335557,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "RYR2937"
+  },
+  {
+    "icao24": "345030",
+    "firstSeen": 1781344004,
+    "lastSeen": 1781357142,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEBL",
+    "callsign": "ANE5669"
+  },
+  {
+    "icao24": "344f53",
+    "firstSeen": 1781357079,
+    "lastSeen": 1781370840,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "WZZ9504"
+  },
+  {
+    "icao24": "344f35",
+    "firstSeen": 1781310184,
+    "lastSeen": 1781319178,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "EZY5245"
+  },
+  {
+    "icao24": "344fed",
+    "firstSeen": 1781384294,
+    "lastSeen": 1781394467,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCFV",
+    "callsign": "ANE7057"
+  },
+  {
+    "icao24": "344fc4",
+    "firstSeen": 1781335998,
+    "lastSeen": 1781346769,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "EZY173"
+  },
+  {
+    "icao24": "345012",
+    "firstSeen": 1781314301,
+    "lastSeen": 1781317595,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LEMD",
+    "callsign": "AEA5955"
+  },
+  {
+    "icao24": "344f5f",
+    "firstSeen": 1781354033,
+    "lastSeen": 1781356066,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "LIRF",
+    "callsign": "IBS1157"
+  },
+  {
+    "icao24": "344fed",
+    "firstSeen": 1781342333,
+    "lastSeen": 1781355876,
+    "estDepartureAirport": "LEMD",
+    "estArrivalAirport": "GCLP",
+    "callsign": "EZY5367"
+  }
+]

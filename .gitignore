@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.conda
+.omo
+data/*
+!data/mock/
+!data/mock/**
+tmp/
+AGENTS.md

@@ -1,0 +1,37 @@
+services:
+
+  mongodb:
+    image: mongo:7
+    container_name: aeropredict-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: aeropredict
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16
+    container_name: aeropredict-pg
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: aeropredict
+      POSTGRES_USER: aeropredict
+      POSTGRES_PASSWORD: aeropredict
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U aeropredict -d aeropredict
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo_data:
+  postgres_data:

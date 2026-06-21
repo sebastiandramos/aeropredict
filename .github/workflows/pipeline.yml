@@ -1,0 +1,106 @@
+name: OpenSky Pipeline
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC
+    - cron: '0 20 * * *'  # 20:00 UTC
+  workflow_dispatch:       # trigger manual para testing
+
+concurrency:
+  group: opensky-pipeline
+  cancel-in-progress: false
+
+env:
+  OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
+  R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+  OPENSKY_CLIENT_ID_PABLO: ${{ secrets.OPENSKY_CLIENT_ID_PABLO }}
+  OPENSKY_CLIENT_SECRET_PABLO: ${{ secrets.OPENSKY_CLIENT_SECRET_PABLO }}
+  OPENSKY_CLIENT_ID_SEBASTIAN: ${{ secrets.OPENSKY_CLIENT_ID_SEBASTIAN }}
+  OPENSKY_CLIENT_SECRET_SEBASTIAN: ${{ secrets.OPENSKY_CLIENT_SECRET_SEBASTIAN }}
+  OPENSKY_CLIENT_ID_TOMAS: ${{ secrets.OPENSKY_CLIENT_ID_TOMAS }}
+  OPENSKY_CLIENT_SECRET_TOMAS: ${{ secrets.OPENSKY_CLIENT_SECRET_TOMAS }}
+  MONGODB_URI: ${{ secrets.MONGODB_URI }}
+  POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
+
+jobs:
+  extract:
+    name: "1/5 Extract → Bronze"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Extraer OpenSky → Bronze Delta (R2)
+        run: python scripts/extract_to_bronze.py --days 2
+
+  bronze_to_silver:
+    name: "2/5 Bronze → Silver"
+    needs: extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Bronze Delta (R2) → MongoDB Atlas
+        run: python scripts/bronze_to_silver.py
+
+  silver_to_gold:
+    name: "3/5 Silver → Gold (flights)"
+    needs: bronze_to_silver
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: MongoDB Atlas → Neon PostgreSQL
+        run: python scripts/silver_to_gold.py
+
+  entities_to_gold:
+    name: "4/5 Entity tables → Gold"
+    needs: silver_to_gold
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Sync aircraft + weather → PostgreSQL
+        run: python scripts/silver_to_gold_entities.py
+
+  build_feature_store:
+    name: "5/5 Feature store"
+    needs: entities_to_gold
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Build gold.feature_store
+        run: python scripts/build_feature_store.py
