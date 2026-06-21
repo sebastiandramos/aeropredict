@@ -1,0 +1,14 @@
+artifact_uri: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/9ade471cb80441df86ed16e9f7e6c5eb/artifacts
+end_time: 1782044111780
+entry_point_name: ''
+experiment_id: '910297819294181408'
+lifecycle_stage: active
+run_id: 9ade471cb80441df86ed16e9f7e6c5eb
+run_name: bald-calf-250
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782044111589
+status: 3
+tags: []
+user_id: devcontainers

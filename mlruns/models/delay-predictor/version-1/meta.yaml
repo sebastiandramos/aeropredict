@@ -1,0 +1,16 @@
+creation_timestamp: 1782044118443
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1782044118443
+model_id: m-4c936f20a00348849420d72a50bf57a9
+name: delay-predictor
+run_id: 1f9269bc3a1742ada796c029a557215d
+run_link: null
+source: models:/m-4c936f20a00348849420d72a50bf57a9
+status: READY
+status_message: null
+storage_location: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/models/m-4c936f20a00348849420d72a50bf57a9/artifacts
+user_id: null
+version: 1
+workspace: default

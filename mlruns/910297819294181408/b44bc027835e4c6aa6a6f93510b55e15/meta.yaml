@@ -1,0 +1,14 @@
+artifact_uri: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/b44bc027835e4c6aa6a6f93510b55e15/artifacts
+end_time: 1782044083471
+entry_point_name: ''
+experiment_id: '910297819294181408'
+lifecycle_stage: active
+run_id: b44bc027835e4c6aa6a6f93510b55e15
+run_name: selective-crane-132
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782044083452
+status: 4
+tags: []
+user_id: devcontainers

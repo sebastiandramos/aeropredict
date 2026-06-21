@@ -1,0 +1,10 @@
+artifact_location: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/models/m-4c936f20a00348849420d72a50bf57a9/artifacts
+creation_timestamp: 1782044112245
+experiment_id: '910297819294181408'
+last_updated_timestamp: 1782044118403
+model_id: m-4c936f20a00348849420d72a50bf57a9
+model_type: null
+name: model
+source_run_id: 1f9269bc3a1742ada796c029a557215d
+status: 2
+status_message: null

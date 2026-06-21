@@ -1,0 +1,9 @@
+artifact_location: file:///home/devcontainers/aeropredict/mlruns/0
+creation_time: 1782044081488
+effective_trace_archival_retention: null
+experiment_id: '0'
+last_update_time: 1782044081488
+lifecycle_stage: active
+name: Default
+trace_location: null
+workspace: default

@@ -1,0 +1,27 @@
+artifact_path: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/models/m-4c936f20a00348849420d72a50bf57a9/artifacts
+flavors:
+  lightgbm:
+    code: null
+    data: model.lgb
+    lgb_version: 4.6.0
+    model_class: lightgbm.basic.Booster
+    serialization_format: skops
+    skops_trusted_types:
+    - lightgbm.sklearn.LGBMRegressor
+    - collections.OrderedDict
+    - lightgbm.sklearn.LGBMClassifier
+    - lightgbm.basic.Booster
+  python_function:
+    data: model.lgb
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.lightgbm
+    python_version: 3.12.13
+mlflow_version: 3.14.0
+model_id: m-4c936f20a00348849420d72a50bf57a9
+model_size_bytes: 560941
+model_uuid: m-4c936f20a00348849420d72a50bf57a9
+prompts: null
+run_id: 1f9269bc3a1742ada796c029a557215d
+utc_time_created: '2026-06-21 12:15:12.269615'

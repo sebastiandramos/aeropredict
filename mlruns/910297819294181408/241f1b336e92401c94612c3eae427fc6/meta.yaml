@@ -1,0 +1,14 @@
+artifact_uri: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/241f1b336e92401c94612c3eae427fc6/artifacts
+end_time: 1782044111981
+entry_point_name: ''
+experiment_id: '910297819294181408'
+lifecycle_stage: active
+run_id: 241f1b336e92401c94612c3eae427fc6
+run_name: spiffy-hog-95
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782044111784
+status: 3
+tags: []
+user_id: devcontainers

@@ -1,0 +1,14 @@
+artifact_uri: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/1f9269bc3a1742ada796c029a557215d/artifacts
+end_time: 1782044118464
+entry_point_name: ''
+experiment_id: '910297819294181408'
+lifecycle_stage: active
+run_id: 1f9269bc3a1742ada796c029a557215d
+run_name: hpo_best_model
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782044112196
+status: 3
+tags: []
+user_id: devcontainers

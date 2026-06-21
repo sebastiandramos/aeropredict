@@ -1,0 +1,9 @@
+artifact_location: file:///home/devcontainers/aeropredict/mlruns/910297819294181408
+creation_time: 1782044081505
+effective_trace_archival_retention: null
+experiment_id: '910297819294181408'
+last_update_time: 1782044081505
+lifecycle_stage: active
+name: hpo_delay_predictor
+trace_location: null
+workspace: default

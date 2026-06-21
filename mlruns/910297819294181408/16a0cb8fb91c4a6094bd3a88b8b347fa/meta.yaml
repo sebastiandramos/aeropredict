@@ -1,0 +1,14 @@
+artifact_uri: file:///home/devcontainers/aeropredict/mlruns/910297819294181408/16a0cb8fb91c4a6094bd3a88b8b347fa/artifacts
+end_time: 1782044111586
+entry_point_name: ''
+experiment_id: '910297819294181408'
+lifecycle_stage: active
+run_id: 16a0cb8fb91c4a6094bd3a88b8b347fa
+run_name: marvelous-frog-780
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782044111380
+status: 3
+tags: []
+user_id: devcontainers
