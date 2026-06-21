@@ -230,6 +230,6 @@ _check_*.py
 _status.py
 save_*.py
 fetch_*.py
-test_*.py
+/test_*.py
 AeroPredict_Balance_Anio_0.xlsx
 scripts/compact_delta.py
