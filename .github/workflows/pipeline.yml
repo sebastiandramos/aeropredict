@@ -27,10 +27,14 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e .
       - uses: dopplerhq/cli-action@v3
-      - name: Debug - listar secrets disponibles
-        run: doppler run -- env | grep OPENSKY | sed 's/=.*/=***/'
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      - name: Debug - conectividad a OpenSky
+        run: |
+          echo "--- DNS ---"
+          nslookup auth.opensky-network.org || true
+          echo "--- curl con timeout corto ---"
+          curl -v --connect-timeout 10 https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token || true
+          echo "--- IP saliente del runner ---"
+          curl -s https://ifconfig.me || true
       - name: Extraer OpenSky → Bronze Delta (R2)
         run: doppler run -- python scripts/extract_to_bronze.py --days 2
         env:
