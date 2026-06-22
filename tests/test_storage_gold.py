@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_gold import close, write_flights_gold
 from aeropredict.opensky.storage_gold import write_flights_gold_raw as write_flights_gold_raw_func
 

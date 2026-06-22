@@ -5,14 +5,10 @@ Covers happy-path, partially invalid inputs, empty lists and logging.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import logging
-
-import pytest
+from datetime import UTC, datetime
 
 from aeropredict import validators
-from aeropredict import schemas
-
 
 NOW = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -26,7 +22,11 @@ def test_validate_flights_all_valid(caplog):
     valid, invalid = validators.validate_flights(rows)
     assert len(valid) == 2
     assert len(invalid) == 0
-    assert any("validated 2 rows" in r for r in caplog.messages) or any("validated 0 rows" in r for r in caplog.messages) or True
+    assert (
+        any("validated 2 rows" in r for r in caplog.messages)
+        or any("validated 0 rows" in r for r in caplog.messages)
+        or True
+    )
 
 
 def test_validate_flights_partial_invalid(caplog):
@@ -120,7 +120,10 @@ def test_invalid_details_structure():
 
 def test_large_dataset_performance_sanity():
     # generate 1000 small valid rows to exercise loop
-    rows = [{"icao24": f"{i:06X}", "first_seen": NOW, "last_seen": NOW, "flight_date": NOW} for i in range(1000)]
+    rows = [
+        {"icao24": f"{i:06X}", "first_seen": NOW, "last_seen": NOW, "flight_date": NOW}
+        for i in range(1000)
+    ]
     valid, invalid = validators.validate_flights(rows)
     assert len(valid) == 1000
     assert len(invalid) == 0

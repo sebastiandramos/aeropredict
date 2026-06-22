@@ -9,7 +9,7 @@ Tests ``write_flights_gold_raw()``, ``write_aircraft_gold()``, and
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,7 +19,6 @@ from aeropredict.opensky.storage_gold import (
     write_flights_gold_raw,
     write_weather_gold,
 )
-
 
 # ---------------------------------------------------------------------------
 # helpers — produce dicts that look like MongoDB documents
@@ -36,7 +35,7 @@ def _flight_doc(
     arr: str | None = "LEBL",
 ) -> dict:
     """Return a MongoDB-style flight document dict."""
-    ts = first_seen or datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+    ts = first_seen or datetime(2025, 6, 15, 10, 30, 0, tzinfo=UTC)
     return {
         "icao24": icao24,
         "callsign": callsign,
@@ -93,7 +92,7 @@ def _weather_doc(
     return {
         "airport_code": airport_code,
         "timestamp": timestamp
-        or datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc),
+        or datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
         "flight_date": flight_date or datetime(2025, 6, 15),
         "temperature_2m": temperature_2m,
         "precipitation": precipitation,
@@ -106,7 +105,7 @@ def _weather_doc(
 
 
 # ---------------------------------------------------------------------------
-# fixture – clean entity tables before each test
+# fixture - clean entity tables before each test
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +163,7 @@ class TestFlightsRaw:
 
     def test_on_conflict_does_nothing(self, clean_entities, postgres_client):
         """Same (icao24, flight_date, first_seen) → no duplicate row."""
-        ts = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+        ts = datetime(2025, 6, 15, 10, 30, 0, tzinfo=UTC)
         doc = _flight_doc(icao24="abc001", first_seen=ts)
 
         n1 = write_flights_gold_raw([doc])
@@ -181,13 +180,13 @@ class TestFlightsRaw:
         write_flights_gold_raw([
             _flight_doc(
                 icao24="abc001",
-                first_seen=datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         ])
         write_flights_gold_raw([
             _flight_doc(
                 icao24="abc001",
-                first_seen=datetime(2025, 6, 15, 14, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 14, 0, 0, tzinfo=UTC),
             ),
         ])
 
@@ -307,7 +306,7 @@ class TestWeather:
 
     def test_on_conflict_does_nothing(self, clean_entities, postgres_client):
         """Same (airport_code, timestamp) → no duplicate row."""
-        ts = datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC)
         doc = _weather_doc(airport_code="LEMD", timestamp=ts)
 
         write_weather_gold([doc])
@@ -322,15 +321,15 @@ class TestWeather:
         docs = [
             _weather_doc(
                 airport_code="LEMD",
-                timestamp=datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
             _weather_doc(
                 airport_code="LEBL",
-                timestamp=datetime(2025, 6, 15, 11, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC),
             ),
             _weather_doc(
                 airport_code="LEPA",
-                timestamp=datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
             ),
         ]
         write_weather_gold(docs)
@@ -344,11 +343,11 @@ class TestWeather:
         write_weather_gold([
             _weather_doc(
                 airport_code="LEMD",
-                timestamp=datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
             _weather_doc(
                 airport_code="LEMD",
-                timestamp=datetime(2025, 6, 15, 11, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC),
             ),
         ])
 

@@ -7,13 +7,13 @@ Tests ``write_flights_gold()`` which aggregates ``Flight`` objects into
 
 from __future__ import annotations
 
-from datetime import date as date_type, datetime, timezone
+from datetime import UTC, datetime
+from datetime import date as date_type
 
 import pytest
 
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_gold import close, write_flights_gold
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -29,7 +29,7 @@ def _flight(
     callsign: str | None = "IBE1234",
 ) -> Flight:
     """Return a Flight with sensible defaults for test brevity."""
-    ts = first_seen or datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+    ts = first_seen or datetime(2025, 6, 15, 10, 30, 0, tzinfo=UTC)
     return Flight(
         icao24=icao24,
         first_seen=ts,
@@ -47,7 +47,7 @@ def _flight(
 
 
 # ---------------------------------------------------------------------------
-# fixture – clean aggregation tables before each test
+# fixture - clean aggregation tables before each test
 # ---------------------------------------------------------------------------
 
 
@@ -144,7 +144,7 @@ class TestDailyAirportTraffic:
                 icao24="abc001",
                 dep="LEMD",
                 arr=None,
-                first_seen=datetime(2025, 7, 4, 10, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 7, 4, 10, 0, 0, tzinfo=UTC),
             ),
         ])
 
@@ -235,11 +235,11 @@ class TestRouteDensity:
         write_flights_gold([
             _flight(
                 icao24="abc001", dep="LEMD", arr="LEBL",
-                first_seen=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
             ),
             _flight(
                 icao24="abc002", dep="LEMD", arr="LEBL",
-                first_seen=datetime(2025, 6, 15, 10, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         ])
 
@@ -262,15 +262,15 @@ class TestHourlyDistribution:
         flights = [
             _flight(
                 icao24="abc001", dep="LEMD", arr="LEBL",
-                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=UTC),
             ),
             _flight(
                 icao24="abc002", dep="LEMD", arr="LEBL",
-                first_seen=datetime(2025, 6, 15, 8, 30, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 8, 30, 0, tzinfo=UTC),
             ),
             _flight(
                 icao24="abc003", dep="LEMD", arr="LEPA",
-                first_seen=datetime(2025, 6, 15, 14, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 14, 0, 0, tzinfo=UTC),
             ),
         ]
         write_flights_gold(flights)
@@ -293,13 +293,13 @@ class TestHourlyDistribution:
         write_flights_gold([
             _flight(
                 icao24="abc001", dep="LEMD", arr=None,
-                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=UTC),
             ),
         ])
         write_flights_gold([
             _flight(
                 icao24="abc002", dep="LEMD", arr=None,
-                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=timezone.utc),
+                first_seen=datetime(2025, 6, 15, 8, 0, 0, tzinfo=UTC),
             ),
         ])
 
@@ -322,7 +322,7 @@ class TestEdgeCases:
             Flight(
                 icao24="abc123",
                 first_seen=None,  # type: ignore[arg-type]
-                last_seen=datetime(2025, 6, 15, 11, 0, 0, tzinfo=timezone.utc),
+                last_seen=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC),
                 est_departure_airport="LEMD",
                 est_arrival_airport="LEBL",
                 callsign="IBE1234",

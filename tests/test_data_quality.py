@@ -12,7 +12,7 @@ All tests are pure unit tests at the dict/schema level. No DB connections needed
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -314,7 +314,8 @@ class TestNormalization:
         When: validated
         Then: converted to UTC (time preserved, offset removed).
         """
-        from datetime import timezone, timedelta as tzdelta
+        from datetime import timedelta as tzdelta
+        from datetime import timezone
 
         tz_eastern = timezone(tzdelta(hours=-5))
         eastern_time = datetime(2026, 6, 15, 10, 0, 0, tzinfo=tz_eastern)
@@ -660,19 +661,19 @@ class TestCompleteness:
     """
 
     # Columns considered critical for ML feature engineering
-    CRITICAL_COLUMNS: list[str] = [
+    CRITICAL_COLUMNS: ClassVar[list[str]] = [
         "icao24",
         "callsign",
         "est_departure_airport",
         "est_arrival_airport",
     ]
 
-    TIMESTAMP_COLUMNS: list[str] = [
+    TIMESTAMP_COLUMNS: ClassVar[list[str]] = [
         "first_seen",
         "last_seen",
     ]
 
-    ALL_CRITICAL: list[str] = CRITICAL_COLUMNS + TIMESTAMP_COLUMNS
+    ALL_CRITICAL: ClassVar[list[str]] = CRITICAL_COLUMNS + TIMESTAMP_COLUMNS
 
     @staticmethod
     def _make_completeness_test_set() -> list[dict[str, Any]]:
@@ -754,7 +755,7 @@ class TestCompleteness:
                 failures.append(f"{col}: {non_null}/{total} ({pct:.0f}%)")
 
         assert not failures, (
-            f"Critical columns below 80% completeness:\n  " + "\n  ".join(failures)
+            "Critical columns below 80% completeness:\n  " + "\n  ".join(failures)
         )
 
     def test_timestamp_columns_above_80_pct(self) -> None:
@@ -779,7 +780,7 @@ class TestCompleteness:
                 failures.append(f"{col}: {non_null}/{total} ({pct:.0f}%)")
 
         assert not failures, (
-            f"Timestamp columns below 80% completeness:\n  " + "\n  ".join(failures)
+            "Timestamp columns below 80% completeness:\n  " + "\n  ".join(failures)
         )
 
     def test_all_columns_completeness_profile(self) -> None:
@@ -902,7 +903,7 @@ class TestSchemaBoundaries:
         """
         raw = _make_flight_doc_dict(icao24="abc123", flight_date=None)
 
-        valid, invalid = validate_flights([raw])
+        valid, _invalid = validate_flights([raw])
 
         assert len(valid) == 1
         assert valid[0].flight_date is None

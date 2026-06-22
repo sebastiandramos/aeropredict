@@ -514,7 +514,6 @@ def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
             template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s)",
             page_size=500,
         )
-        n = cur.rowcount
     conn.commit()
     logger.info("Gold weather: %d filas insertadas", len(rows))
     return len(rows)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.models import Flight
 
