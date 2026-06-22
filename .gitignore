@@ -235,4 +235,6 @@ fetch_*.py
 /test_*.py
 AeroPredict_Balance_Anio_0.xlsx
 scripts/compact_delta.py
+scripts/migrate_bronze_partitioning.py
 .vscode/settings.json
+nul
