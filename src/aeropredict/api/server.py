@@ -5,16 +5,18 @@ Model is attached to app.state.model and app.state.model_version.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from time import perf_counter
 
 import mlflow
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, status
 
 from .models import (
     DelayPredictionRequest,
@@ -23,6 +25,56 @@ from .models import (
     ETAPredictionResponse,
     HealthResponse,
 )
+
+# PostgreSQL connection for prediction archival
+POSTGRES_URI = os.environ.get(
+    "POSTGRES_URI",
+    "postgresql://aeropredict:aeropredict@localhost:5432/aeropredict",
+)
+
+
+def _log_prediction_to_db(
+    *,
+    request_id: str,
+    model_version: str | None,
+    flight_features: dict,
+    predicted_delay_minutes: float | None,
+    predicted_eta: str | None,
+) -> None:
+    """Write a single prediction row to gold.predictions (fire-and-forget).
+
+    This function is designed to be called via FastAPI BackgroundTasks so it
+    never blocks the API response.  Errors are logged but never propagated.
+    """
+    try:
+        import psycopg2  # lazy import to avoid hard dep at module level
+
+        conn = psycopg2.connect(POSTGRES_URI)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO gold.predictions
+                        (request_id, model_version, flight_features,
+                         predicted_delay_minutes, predicted_eta, timestamp)
+                    VALUES (%s, %s, %s::jsonb, %s, %s, NOW())
+                    ON CONFLICT (request_id) DO NOTHING
+                    """,
+                    (
+                        request_id,
+                        model_version,
+                        json.dumps(flight_features),
+                        predicted_delay_minutes,
+                        predicted_eta,
+                    ),
+                )
+            conn.commit()
+            LOGGER.info("Prediction %s archived to gold.predictions", request_id)
+        finally:
+            conn.close()
+    except Exception:
+        LOGGER.exception("Failed to archive prediction %s", request_id)
+
 
 LOGGER = logging.getLogger(__name__)
 logging.basicConfig(
@@ -106,12 +158,14 @@ async def predict_delay(
     request: Request,
     response: Response,
     payload: DelayPredictionRequest,
+    background_tasks: BackgroundTasks,
 ) -> DelayPredictionResponse:
     """Predict flight delay (minutes) given features.
 
     - Validates payload using DelayPredictionRequest (Pydantic)
     - Uses app.state.model to run inference. If model missing -> 503
     - Returns DelayPredictionResponse with predicted_delay_minutes, confidence, model_version
+    - Archives prediction to gold.predictions in background
     """
     start_ts = perf_counter()
     model = getattr(app.state, "model", None)
@@ -191,6 +245,18 @@ async def predict_delay(
             model_version=model_version,
         )
         response.status_code = status.HTTP_200_OK
+
+        # Archive prediction to PostgreSQL in background (non-blocking)
+        request_id = str(uuid.uuid4())
+        background_tasks.add_task(
+            _log_prediction_to_db,
+            request_id=request_id,
+            model_version=model_version,
+            flight_features=features,
+            predicted_delay_minutes=pred_val,
+            predicted_eta=None,
+        )
+
         return out
     except HTTPException:
         raise
@@ -207,11 +273,13 @@ async def predict_eta(
     request: Request,
     response: Response,
     payload: ETAPredictionRequest,
+    background_tasks: BackgroundTasks,
 ) -> ETAPredictionResponse:
     """Predict ETA given a scheduled arrival and flight features.
 
     Computes ETA = scheduled_arrival + predicted_delay.
     If delay > 240 minutes, marks ``disruption_likely = True``.
+    Archives prediction to gold.predictions in background.
     """
     start_ts = perf_counter()
     model = getattr(app.state, "model", None)
@@ -272,6 +340,18 @@ async def predict_eta(
             disruption_likely=disruption_likely,
         )
         response.status_code = status.HTTP_200_OK
+
+        # Archive prediction to PostgreSQL in background (non-blocking)
+        request_id = str(uuid.uuid4())
+        background_tasks.add_task(
+            _log_prediction_to_db,
+            request_id=request_id,
+            model_version=getattr(app.state, "model_version", None),
+            flight_features=features_dict,
+            predicted_delay_minutes=predicted_delay,
+            predicted_eta=eta.isoformat(),
+        )
+
         return out
     except HTTPException:
         raise

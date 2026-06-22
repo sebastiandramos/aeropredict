@@ -123,3 +123,95 @@ jobs:
         run: pip install -e .
       - name: Build gold.feature_store
         run: python scripts/build_feature_store.py
+
+  model_registry_check:
+    name: "6/6 Model registry validation"
+    needs: build_feature_store
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Validate MLflow model registry
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
+        run: |
+          python -c "
+          import mlflow
+          mlflow.set_tracking_uri('${{ env.MLFLOW_TRACKING_URI }}')
+          client = mlflow.MlflowClient()
+          versions = client.search_model_versions('name=\"delay-predictor\"')
+          if not versions:
+              raise ValueError('No model versions found in registry')
+          latest = sorted(versions, key=lambda v: int(v.version), reverse=True)[0]
+          print(f'Latest model version: {latest.version}')
+          print(f'Run ID: {latest.run_id}')
+          print(f'Status: {latest.status}')
+          "
+
+  api_health_check:
+    name: "7/7 API health check"
+    needs: model_registry_check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - name: Start API server
+        run: |
+          uvicorn src.aeropredict.api.server:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
+          MLFLOW_MODEL_URI: "models:/delay-predictor/production"
+      - name: Verify health endpoint
+        run: |
+          curl -sf http://localhost:8000/health || (echo "Health check failed" && exit 1)
+      - name: Verify model version in health response
+        run: |
+          HEALTH=$(curl -sf http://localhost:8000/health)
+          echo "Health response: $HEALTH"
+          echo "$HEALTH" | python -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data['status'] == 'ok', f\"Status not ok: {data['status']}\"
+          assert data['model_version'] is not None, 'model_version is None'
+          print(f'Model version: {data[\"model_version\"]}')
+          "
+      - name: Run sample inference
+        run: |
+          PREDICTION=$(curl -sf -X POST http://localhost:8000/predict/delay \
+            -H "Content-Type: application/json" \
+            -d '{
+              "hour_of_day": 14,
+              "day_of_week": 2,
+              "airline": "IB",
+              "route_distance": 500.0,
+              "aircraft_type": "A320",
+              "weather_temperature_2m": 20.0,
+              "weather_precipitation": 0.0
+            }')
+          echo "Prediction response: $PREDICTION"
+          echo "$PREDICTION" | python -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert 'predicted_delay_minutes' in data, 'Missing predicted_delay_minutes'
+          assert 'confidence' in data, 'Missing confidence'
+          assert 'model_version' in data, 'Missing model_version'
+          print(f'Predicted delay: {data[\"predicted_delay_minutes\"]:.2f} min')
+          print(f'Confidence: {data[\"confidence\"]}')
+          print(f'Model version: {data[\"model_version\"]}')
+          "
+      - name: Stop API server
+        if: always()
+        run: pkill -f "uvicorn src.aeropredict.api.server:app" || true

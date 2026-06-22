@@ -57,3 +57,9 @@ jobs:
       - name: Register model in MLflow (Production)
         run: python scripts/register_model.py --stage Production
         continue-on-error: false
+
+      - name: Evaluate prediction accuracy
+        run: python scripts/evaluate_predictions.py --days 30
+        continue-on-error: true  # Non-blocking: first run may have no data
+        env:
+          POSTGRES_URI: ${{ secrets.POSTGRES_URI }}
