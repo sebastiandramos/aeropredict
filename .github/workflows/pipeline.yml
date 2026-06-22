@@ -2,8 +2,8 @@ name: OpenSky Pipeline
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # 07:00 UTC
-    - cron: '0 20 * * *'  # 20:00 UTC
+    - cron: '30 6 * * *'   # 06:30 UTC (08:30 CEST)
+    - cron: '30 19 * * *'  # 19:30 UTC (21:30 CEST)
   workflow_dispatch:       # trigger manual para testing
 
 concurrency:
