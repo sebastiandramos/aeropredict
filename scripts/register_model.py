@@ -152,13 +152,19 @@ def main(argv: list[str] | None = None) -> int:
                 created_version = mv.version
                 log_lines.append(f"Created model version {created_version} from run {best_run_id}")
             else:
-                # Fallback: register from local artifact file if present
+                # Fallback: use mlflow.lightgbm to log model from local file
                 if best_model_file.exists():
-                    # MLflow expects local source to be a directory with model artifact; we pass file path as source
-                    src = str(best_model_file.resolve())
-                    mv = client.create_model_version(name=model_name, source=src, run_id=None)
+                    import mlflow.lightgbm as lgb_mlflow
+                    import lightgbm as lgb
+
+                    booster = lgb.Booster(model_file=str(best_model_file.resolve()))
+                    with mlflow.start_run():
+                        lgb_mlflow.log_model(booster, artifact_path="model")
+                        run_id = mlflow.active_run().info.run_id
+                    source = f"runs:/{run_id}/model"
+                    mv = client.create_model_version(name=model_name, source=source, run_id=run_id)
                     created_version = mv.version
-                    log_lines.append(f"Created model version {created_version} from local file {src}")
+                    log_lines.append(f"Created model version {created_version} from local file {best_model_file}")
                 else:
                     raise RuntimeError("No run found and models/best_model.txt not present; cannot register model")
 

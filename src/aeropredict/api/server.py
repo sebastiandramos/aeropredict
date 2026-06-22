@@ -185,10 +185,12 @@ async def predict_delay(
         # ensure deterministic column order using model's feature names when available
         try:
             feature_names = []
-            # try common metadata paths used in mlflow pyfunc LightGBM wrapper
             if hasattr(model, "metadata") and model.metadata is not None:
-                meta = model.metadata
-                feature_names = getattr(meta, "signature", {}).get("inputs", []) or []
+                sig = getattr(model.metadata, "signature", None)
+                if sig is not None and hasattr(sig, "inputs"):
+                    feature_names = [
+                        inp.name for inp in sig.inputs.inputs() if hasattr(inp, "name")
+                    ]
         except Exception:
             feature_names = []
 
@@ -208,16 +210,8 @@ async def predict_delay(
         else:
             pred_val = float(pred)
 
-        # estimate confidence
+        # Confidence is a placeholder — LightGBM regression does not expose predict_proba.
         confidence = 0.85
-        try:
-            # LightGBM may expose predict with pred_leaf or raw scores;
-            # ensemble stddev is not always available from pyfunc wrapper.
-            if hasattr(model, "predict_proba"):
-                # not applicable for regression, skip
-                pass
-        except Exception:
-            pass
 
         duration_ms = (perf_counter() - start_ts) * 1000.0
 

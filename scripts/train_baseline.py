@@ -134,13 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Save LightGBM model (text format)
     model_path = out_dir / "baseline_model.txt"
-    try:
-        # sklearn API wrapper exposes booster_
-        booster = model.booster_
-        booster.save_model(str(model_path))
-    except Exception:
-        # fallback: use built-in save
-        model.booster_.save_model(str(model_path))
+    # sklearn API wrapper exposes booster_
+    model.booster_.save_model(str(model_path))
 
     metrics_path = out_dir / "baseline_metrics.json"
     metrics_with_meta = {

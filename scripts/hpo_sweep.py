@@ -207,9 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 value = objective(trial)
                 study.tell(trial, value)
-            except Exception as exc:  # safety: mark failed trial
+            except Exception as exc:  # safety: mark failed trial, continue sweep
                 study.tell(trial, float("inf"))
-                raise
+                print(f"Warning: Trial {t} failed: {exc}")
 
             # collect trial metadata
             tr = study.trials[-1]

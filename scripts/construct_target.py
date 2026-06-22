@@ -80,7 +80,11 @@ def construct_target(df: pd.DataFrame) -> pd.DataFrame:
     df["actual_arrival_dt"] = _ensure_datetime(df.get("actual_arrival"))
 
     # Flag schedule missing when scheduled_arrival is NaT or schedule_source missing
-    df["schedule_missing"] = df["scheduled_arrival_dt"].isna() | df.get("schedule_source").isna().fillna(False)
+    schedule_col = df.get("schedule_source")
+    if schedule_col is not None:
+        df["schedule_missing"] = df["scheduled_arrival_dt"].isna() | schedule_col.isna()
+    else:
+        df["schedule_missing"] = df["scheduled_arrival_dt"].isna()
 
     # Remove rows that lack actual_arrival (we cannot compute delay)
     before = len(df)

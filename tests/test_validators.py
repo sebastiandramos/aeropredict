@@ -22,10 +22,8 @@ def test_validate_flights_all_valid(caplog):
     valid, invalid = validators.validate_flights(rows)
     assert len(valid) == 2
     assert len(invalid) == 0
-    assert (
-        any("validated 2 rows" in r for r in caplog.messages)
-        or any("validated 0 rows" in r for r in caplog.messages)
-        or True
+    assert any("validated 2 rows" in r for r in caplog.messages) or any(
+        "validated 0 rows" in r for r in caplog.messages
     )
 
 
