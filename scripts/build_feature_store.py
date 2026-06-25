@@ -3,9 +3,13 @@
 Joins flights + schedules + aircraft + weather + gold aggregations
 into a flat feature table ready for model training.
 
+Skips if checkpoint exists (use --force to rebuild).
+Only processes last 30 days by default (--force for full history).
+
 CLI:
     --reset     Drops and recreates the table
     --dry-run   Shows how many rows would be inserted
+    --force     Ignora checkpoint y procesa todo el histórico
 """
 
 from __future__ import annotations
@@ -13,12 +17,15 @@ from __future__ import annotations
 import argparse
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from pymongo import MongoClient
 
-from aeropredict.opensky.checkpoint_mongo import add_to_checkpoint_set
+from aeropredict.opensky.checkpoint_mongo import (
+    add_to_checkpoint_set,
+    get_checkpoint_set,
+)
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import _get_conn
 from aeropredict.sources.matcher import FlightScheduleMatcher
@@ -148,12 +155,14 @@ def _find_weather_hour(
 def build_feature_store(
     dry_run: bool = False,
     reset: bool = False,
+    force: bool = False,
 ) -> int:
     """Construye gold.feature_store con todas las features.
 
     Args:
         dry_run: Solo contar filas, no insertar.
         reset: Dropear y recrear la tabla.
+        force: Ignorar checkpoint y procesar todo el histórico.
 
     Returns:
         Número de filas insertadas.
@@ -162,6 +171,16 @@ def build_feature_store(
     mongo_client = MongoClient(get_mongo_uri())
     mongo_db = mongo_client.get_database()
     pg_conn = _get_conn()
+
+    # -- Check checkpoint --
+    checkpoint = get_checkpoint_set(CHECKPOINT_COLLECTION)
+    if "done" in checkpoint and not force and not reset:
+        logger.info(
+            "Checkpoint exists: feature_store ya construido. "
+            "Usa --force para rebuild."
+        )
+        mongo_client.close()
+        return 0
 
     if reset:
         logger.info("Reseteando gold.feature_store...")
@@ -181,8 +200,18 @@ def build_feature_store(
     daily_traffic = gold_lookup.get("daily_traffic", {})
     hourly_traffic = gold_lookup.get("hourly_traffic", {})
 
-    # -- Iterar vuelos --
-    flights_cursor = mongo_db["flights"].find({}).batch_size(500)
+    # -- Iterar vuelos (últimos 30 días, o todo si --force/--reset) --
+    if force or reset:
+        date_filter: dict[str, Any] = {}
+        logger.info("Procesando todos los vuelos (sin filtro de fecha)")
+    else:
+        cutoff = date.today() - timedelta(days=30)
+        date_filter = {
+            "flight_date": {"$gte": datetime(cutoff.year, cutoff.month, cutoff.day)},
+        }
+        logger.info("Filtrando vuelos desde %s (usa --force para todo el histórico)", cutoff)
+
+    flights_cursor = mongo_db["flights"].find(date_filter).batch_size(500)
 
     rows: list[tuple[Any, ...]] = []
     total_processed = 0
@@ -332,10 +361,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build gold.feature_store")
     parser.add_argument("--reset", action="store_true", help="Drop y recreate table")
     parser.add_argument("--dry-run", action="store_true", help="Solo contar filas")
-    parser.add_argument("--force", action="store_true", help="Forzar rebuild aunque haya checkpoint")
+    parser.add_argument("--force", action="store_true",
+    help="Ignorar checkpoint y procesar todo el histórico")
     args = parser.parse_args()
 
-    n = build_feature_store(dry_run=args.dry_run, reset=args.reset)
+    n = build_feature_store(dry_run=args.dry_run, reset=args.reset, force=args.force)
 
     if n > 0 and not args.dry_run:
         add_to_checkpoint_set(CHECKPOINT_COLLECTION, "done")
