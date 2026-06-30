@@ -1,0 +1,53 @@
+name: AENA Infovuelos Hourly Collector
+
+on:
+  schedule:
+    - cron: "7 * * * *"  # hourly, minute 7 UTC
+  workflow_dispatch:
+    inputs:
+      airports:
+        description: "Space-separated AENA airport IATA codes"
+        required: false
+        default: "BCN MAD"
+      flight_types:
+        description: "departures, arrivals, or both"
+        required: false
+        default: "both"
+
+concurrency:
+  group: aena-infovuelos-hourly
+  cancel-in-progress: false
+
+env:
+  AENA_AIRPORTS: ${{ github.event.inputs.airports || 'BCN MAD' }}
+  AENA_FLIGHT_TYPES: ${{ github.event.inputs.flight_types || 'both' }}
+
+jobs:
+  collect:
+    name: Collect AENA Infovuelos snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Collect Infovuelos CSV/JSON
+        run: |
+          python scripts/collect_aena_infovuelos.py \
+            --airports $AENA_AIRPORTS \
+            --types $AENA_FLIGHT_TYPES \
+            --output-dir data/raw/aena_infovuelos
+
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aena-infovuelos-${{ github.run_id }}
+          path: data/raw/aena_infovuelos/
+          retention-days: 30
