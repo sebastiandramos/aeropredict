@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import date, timedelta
 from typing import Any
 
 from pymongo import MongoClient
 
 from aeropredict.opensky.config import get_delta_root, get_mongo_uri
 from aeropredict.opensky.storage import write_raw_json
-from aeropredict.opensky.storage_silver import write_weather
 from aeropredict.sources.airport_coords import AIRPORT_COORDS
 from aeropredict.sources.openmeteo import OpenMeteoAdapter
 
@@ -101,6 +101,7 @@ def _has_weather(airport: str, date: str) -> bool:
 def collect_weather(
     airport: str | None = None,
     date_range: tuple[str, str] | None = None,
+    days_back: int | None = None,
     dry_run: bool = False,
     delta_root: str = "data/raw",
 ) -> dict[str, int]:
@@ -109,6 +110,7 @@ def collect_weather(
     Args:
         airport: Aeropuerto específico (None = todos).
         date_range: Tupla (start, end) en formato ISO.
+        days_back: Limitar la extracción a los últimos N días desde la fecha final.
         dry_run: Solo mostrar lo que haría.
         delta_root: Ruta base Delta.
 
@@ -127,6 +129,15 @@ def collect_weather(
             for icao, s, e in ranges
             if s <= filter_end and e >= filter_start
         ]
+
+    if days_back is not None and days_back > 0:
+        clipped_ranges: list[tuple[str, str, str]] = []
+        for icao, start, end in ranges:
+            start_dt = date.fromisoformat(start)
+            end_dt = date.fromisoformat(end)
+            clipped_start = max(start_dt, end_dt - timedelta(days=days_back - 1)).isoformat()
+            clipped_ranges.append((icao, clipped_start, end_dt.isoformat()))
+        ranges = clipped_ranges
 
     total = 0
     weather_written = 0
@@ -154,7 +165,7 @@ def collect_weather(
                 total += 1
                 continue
 
-            # Bronze
+            # Bronze: guardar el payload crudo tal cual llegó de la API
             write_raw_json(
                 "weather_openmeteo",
                 "/v1/archive",
@@ -163,26 +174,7 @@ def collect_weather(
                 delta_root,
             )
 
-            # Silver: un doc por hora
-            hourly = data["hourly"]
-            times = hourly.get("time", [])
-            hourly_docs = []
-            for i, t in enumerate(times):
-                hourly_docs.append({
-                    "airport_code": icao,
-                    "timestamp": t,
-                    "flight_date": t[:10],
-                    "temperature_2m": _safe(hourly.get("temperature_2m", []), i),
-                    "precipitation": _safe(hourly.get("precipitation", []), i),
-                    "wind_speed_10m": _safe(hourly.get("wind_speed_10m", []), i),
-                    "wind_gusts_10m": _safe(hourly.get("wind_gusts_10m", []), i),
-                    "visibility": _safe(hourly.get("visibility", []), i),
-                    "cloud_cover": _safe(hourly.get("cloud_cover", []), i),
-                    "relative_humidity_2m": _safe(hourly.get("relative_humidity_2m", []), i),
-                })
-            write_weather(hourly_docs)
-
-            logger.info("  %s %s→%s: %d horas OK", icao, start, end, len(hourly_docs))
+            logger.info("  %s %s→%s: datos guardados en Bronze", icao, start, end)
             weather_written += 1
         except Exception as e:
             logger.warning("  %s: error: %s", icao, e)
@@ -211,12 +203,15 @@ def main() -> None:
     parser.add_argument("--airport", default=None, help="Código ICAO específico")
     parser.add_argument("--date-range", nargs=2, default=None,
                         help="Rango de fechas YYYY-MM-DD YYYY-MM-DD")
+    parser.add_argument("--days", type=int, default=None,
+                        help="Limitar la extracción a los últimos N días desde la fecha final")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     stats = collect_weather(
         airport=args.airport,
         date_range=tuple(args.date_range) if args.date_range else None,
+        days_back=args.days,
         dry_run=args.dry_run,
         delta_root=get_delta_root(),
     )

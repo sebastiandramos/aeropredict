@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     # Step 1: Extract to Bronze
     if not args.skip_bronze:
         logger.info("--- Paso 1/3: Extract → Bronze ---")
-        from scripts.extract_to_bronze import main as bronze_main
+        from scripts.extract_opensky_to_bronze import main as bronze_main
 
         bronze_args = ["--days", str(args.days)]
         if args.dry_run:

@@ -30,10 +30,50 @@ from aeropredict.opensky.config import get_delta_root, get_storage_options
 from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
-from aeropredict.opensky.storage_silver import write_flights_silver, close as close_silver
+from aeropredict.opensky.storage_silver import (
+    write_flights_silver,
+    write_weather,
+    close as close_silver,
+)
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
 logger = logging.getLogger("bronze_to_silver")
+
+
+def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convierte un payload meteorológico de Bronze a documentos para la colección weather."""
+    hourly = payload.get("hourly", {})
+    times = hourly.get("time", [])
+    if not times:
+        return []
+
+    airport_code = payload.get("airport_code")
+    if not airport_code:
+        return []
+
+    docs: list[dict[str, Any]] = []
+    for i, timestamp in enumerate(times):
+        docs.append({
+            "airport_code": airport_code,
+            "timestamp": timestamp,
+            "flight_date": timestamp[:10],
+            "temperature_2m": _safe(hourly.get("temperature_2m", []), i),
+            "precipitation": _safe(hourly.get("precipitation", []), i),
+            "wind_speed_10m": _safe(hourly.get("wind_speed_10m", []), i),
+            "wind_gusts_10m": _safe(hourly.get("wind_gusts_10m", []), i),
+            "visibility": _safe(hourly.get("visibility", []), i),
+            "cloud_cover": _safe(hourly.get("cloud_cover", []), i),
+            "relative_humidity_2m": _safe(hourly.get("relative_humidity_2m", []), i),
+        })
+    return docs
+
+
+def _safe(arr: list[Any], idx: int) -> Any:
+    """Acceso seguro a lista por índice."""
+    try:
+        return arr[idx]
+    except (IndexError, TypeError):
+        return None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -155,6 +195,44 @@ def _read_bronze_flights(
     return deduped
 
 
+def _read_bronze_weather(delta_root: str, target_date: date_type | None = None) -> list[dict[str, Any]]:
+    """Lee los payloads meteorológicos desde Bronze y los convierte en docs para Silver."""
+    from deltalake import DeltaTable
+
+    table_uri = str(Path(delta_root, "bronze", "weather_openmeteo"))
+    logger.info("Leyendo Bronze weather: %s", table_uri)
+
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+    except Exception as exc:
+        logger.warning("No se pudo leer bronze/weather_openmeteo: %s", exc)
+        return []
+
+    table = dt.to_pyarrow_table()
+    if target_date:
+        import pyarrow.compute as pc
+        import pyarrow as pa
+
+        date_scalar = pa.scalar(target_date, type=pa.date32())
+        mask = pc.equal(table.column("ingestion_date"), date_scalar)
+        table = table.filter(mask)
+
+    rows = table.to_pylist()
+    weather_docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            payload = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        weather_docs.extend(_build_weather_docs(payload))
+
+    logger.info("Bronze weather: %d filas → %d docs weather", len(rows), len(weather_docs))
+    return weather_docs
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_daily_logger()
     args = _parse_args(argv)
@@ -186,24 +264,28 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("%s ya procesado a Silver (checkpoint), saltando", target_date)
         return 0
 
-    # Leer y parsear
+    # Leer y parsear vuelos
     flights = _read_bronze_flights(delta_root, target_date, dry_run=args.dry_run)
+
+    # Leer y parsear weather
+    weather_docs = _read_bronze_weather(delta_root, target_date)
 
     if args.dry_run:
         logger.info(
-            "DRY RUN: %d vuelos listos para Silver (MongoDB)",
+            "DRY RUN: %d vuelos y %d weather docs listos para Silver (MongoDB)",
             len(flights),
+            len(weather_docs),
         )
-        return 0
-
-    if not flights:
-        logger.info("No hay vuelos nuevos para insertar en Silver")
         return 0
 
     # Escribir a Silver (MongoDB)
     try:
-        n = write_flights_silver(flights)
-        logger.info("Silver (MongoDB): %d vuelos insertados", n)
+        if flights:
+            n_flights = write_flights_silver(flights)
+            logger.info("Silver (MongoDB): %d vuelos insertados", n_flights)
+        if weather_docs:
+            n_weather = write_weather(weather_docs)
+            logger.info("Silver (MongoDB): %d weather docs insertados", n_weather)
         add_to_checkpoint_set(CHECKPOINT_COLLECTION, str(target_date))
     except Exception as e:
         logger.error("Error escribiendo a Silver: %s", e)
@@ -213,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         close_silver()
 
     logger.info("=" * 60)
-    logger.info("BRONZE→SILVER COMPLETADO: %d vuelos", len(flights))
+    logger.info("BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs", len(flights), len(weather_docs))
     logger.info("=" * 60)
     return 0
 
