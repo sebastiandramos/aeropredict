@@ -91,8 +91,11 @@ def expand_types(values: list[str]) -> list[str]:
             codes.append("S")
         elif value == "arrivals":
             codes.append("L")
-        else:
+        elif value in FLIGHT_TYPE_LABELS:
             codes.append(value)
+        else:
+            allowed = "arrivals, both, departures, L, S"
+            raise ValueError(f"Invalid flight type {value!r}. Expected one of: {allowed}")
     return list(dict.fromkeys(codes))
 
 
@@ -135,8 +138,9 @@ def collect(
                     {"airport": airport, "flight_type": label, "error": str(exc)}
                 )
                 continue
+            finally:
+                requests_made += 1
 
-            requests_made += 1
             if limit is not None:
                 raw_flights = raw_flights[:limit]
 
