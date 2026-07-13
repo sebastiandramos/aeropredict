@@ -16,6 +16,8 @@ import requests
 AENA_BASE_URL = "https://www.aena.es"
 AENA_INFOVUELOS_PAGE = f"{AENA_BASE_URL}/es/infovuelos.html"
 AENA_FLIGHTS_ENDPOINT = f"{AENA_BASE_URL}/sites/Satellite"
+BACKOFF_BASE = 1.0
+MAX_RETRIES = 3
 
 FLIGHT_TYPES = {
     "departures": "S",
@@ -81,17 +83,58 @@ class AenaInfovuelosAdapter:
         if dos_dias:
             params["dosDias"] = "si"
 
-        response = self.session.post(
-            AENA_FLIGHTS_ENDPOINT,
-            params=params,
-            timeout=self.timeout,
-            allow_redirects=True,
-        )
-        response.raise_for_status()
-        data = response.json()
+        data = self._post_json(AENA_FLIGHTS_ENDPOINT, params=params)
         if not isinstance(data, list):
             raise ValueError(f"Unexpected AENA response type: {type(data).__name__}")
         return data
+
+    def _post_json(self, endpoint: str, params: dict[str, str]) -> Any:
+        """POST JSON with retry/backoff for transient AENA failures."""
+        last_exc: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self.session.post(
+                    endpoint,
+                    params=params,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                )
+                if response.status_code == 429 and attempt < MAX_RETRIES:
+                    self._sleep_before_retry(attempt)
+                    continue
+                response.raise_for_status()
+                try:
+                    return response.json()
+                except ValueError as exc:
+                    content_type = response.headers.get("content-type", "")
+                    sample = response.text[:200].replace("\n", " ")
+                    raise ValueError(
+                        "AENA returned HTTP 200 but the body is not valid JSON "
+                        f"(content-type={content_type!r}, sample={sample!r})"
+                    ) from exc
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    self._sleep_before_retry(attempt)
+                    continue
+                raise
+            except requests.HTTPError as exc:
+                last_exc = exc
+                status = exc.response.status_code if exc.response is not None else 0
+                if status >= 500 and attempt < MAX_RETRIES:
+                    self._sleep_before_retry(attempt)
+                    continue
+                raise
+
+        raise requests.RequestException(
+            f"All {MAX_RETRIES} retries failed for {endpoint}"
+        ) from last_exc
+
+    @staticmethod
+    def _sleep_before_retry(attempt: int) -> None:
+        import time
+
+        time.sleep(BACKOFF_BASE * (2 ** (attempt - 1)))
 
 
 def normalize_flight(
