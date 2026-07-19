@@ -28,22 +28,22 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e .
+        run: pip install -e ".[ml,viz]"
 
       - name: Export ML dataset
         run: python scripts/export_ml_dataset.py --output data/processed/feature_store.parquet
         continue-on-error: false
 
       - name: Feature analysis / select features
-        run: python scripts/feature_analysis.py --mock-rows 1000
+        run: python scripts/feature_analysis.py
         continue-on-error: false
 
       - name: Construct target
-        run: python scripts/construct_target.py --output data/processed/dataset_with_target.parquet --mock-rows 1000
+        run: python scripts/construct_target.py --output data/processed/dataset_with_target.parquet
         continue-on-error: false
 
       - name: Split dataset
-        run: python scripts/split_dataset.py --input data/processed/dataset_with_target.parquet --output-dir data/processed --mock --mock-rows 1000
+        run: python scripts/split_dataset.py --input data/processed/dataset_with_target.parquet --output-dir data/processed
         continue-on-error: false
 
       - name: Train baseline model
