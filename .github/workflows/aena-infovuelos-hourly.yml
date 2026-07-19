@@ -21,6 +21,7 @@ concurrency:
 env:
   AENA_AIRPORTS: ${{ github.event.inputs.airports || 'BCN MAD' }}
   AENA_FLIGHT_TYPES: ${{ github.event.inputs.flight_types || 'both' }}
+  OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
 
 jobs:
   collect:
@@ -37,13 +38,16 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e .
+      - uses: dopplerhq/cli-action@v3
 
-      - name: Collect Infovuelos CSV/JSON
+      - name: Collect Infovuelos CSV/JSON + Bronze
         run: |
-          python scripts/collect_aena_infovuelos.py \
+          doppler run -- python scripts/collect_aena_infovuelos.py \
             --airports $AENA_AIRPORTS \
             --types $AENA_FLIGHT_TYPES \
             --output-dir data/raw/aena_infovuelos
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
       - name: Upload snapshot artifact
         uses: actions/upload-artifact@v4

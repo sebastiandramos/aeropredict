@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from aeropredict.opensky.config import get_delta_root
+from aeropredict.opensky.storage import write_raw_json
 from aeropredict.sources.aena_infovuelos import (
     FLIGHT_TYPE_LABELS,
     AenaInfovuelosAdapter,
@@ -79,6 +81,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sleep", type=float, default=1.0, help="Seconds between requests")
     parser.add_argument("--no-json", action="store_true", help="Do not write raw JSON")
     parser.add_argument("--no-warmup", action="store_true", help="Skip initial page warmup")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be collected without fetching",
+    )
     return parser.parse_args(argv)
 
 
@@ -107,11 +114,20 @@ def collect(
     sleep_seconds: float = 1.0,
     write_json: bool = True,
     warmup: bool = True,
+    dry_run: bool = False,
+    delta_root: str = "data/raw",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter = AenaInfovuelosAdapter()
     if warmup:
         adapter.warmup()
+
+    if dry_run:
+        for airport in [a.upper() for a in airports]:
+            for flight_type in flight_types:
+                label = FLIGHT_TYPE_LABELS.get(flight_type, flight_type)
+                logger.info("  [dry-run] Would fetch AENA %s %s", airport, label)
+        return {"csv_path": None, "json_path": None, "rows": 0, "errors": 0}
 
     snapshot_at = datetime.now(UTC).replace(microsecond=0)
     stamp = snapshot_at.strftime("%Y%m%dT%H%M%SZ")
@@ -175,6 +191,16 @@ def collect(
     else:
         json_path = None
 
+    # Write raw batches to Bronze (Delta Lake)
+    for batch in raw_batches:
+        write_raw_json(
+            "aena_infovuelos",
+            "/sites/Satellite",
+            {"airport": batch["airport"], "flightType": batch["flight_type"]},
+            batch["flights"],
+            delta_root,
+        )
+
     return {
         "csv_path": str(csv_path),
         "json_path": str(json_path) if json_path else None,
@@ -194,15 +220,20 @@ def main(argv: list[str] | None = None) -> int:
         sleep_seconds=args.sleep,
         write_json=not args.no_json,
         warmup=not args.no_warmup,
+        dry_run=args.dry_run,
+        delta_root=get_delta_root(),
     )
-    logger.info(
-        "AENA Infovuelos complete: %d rows, %d errors",
-        result["rows"],
-        result["errors"],
-    )
-    logger.info("CSV: %s", result["csv_path"])
-    if result["json_path"]:
-        logger.info("JSON: %s", result["json_path"])
+    if args.dry_run:
+        logger.info("Dry run complete — no data fetched or written")
+    else:
+        logger.info(
+            "AENA Infovuelos complete: %d rows, %d errors",
+            result["rows"],
+            result["errors"],
+        )
+        logger.info("CSV: %s", result["csv_path"])
+        if result["json_path"]:
+            logger.info("JSON: %s", result["json_path"])
     return 1 if result["errors"] else 0
 
 
