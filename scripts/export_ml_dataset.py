@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -86,7 +86,7 @@ def _mock_row(airport_choices: List[str]) -> Dict[str, Any]:
         "callsign": f"CS{random.randint(100,999)}",
         "departure_airport": dep,
         "arrival_airport": arr,
-        "delay_minutes": float(round(delay, 1)),
+        "delay_minutes": float(round(max(0, random.gauss(0, 3)), 1)),
         "airborne_minutes": float(round(airborne, 1)),
         "departure_hour": hour,
         "day_of_week": scheduled_dep.isoweekday(),
@@ -208,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.exception("Export failed: %s", exc)
         EVIDENCE_LOG.parent.mkdir(parents=True, exist_ok=True)
         with EVIDENCE_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"{datetime.utcnow().isoformat()} - ERROR - {exc}\n")
+            fh.write(f"{datetime.now(UTC).isoformat()} - ERROR - {exc}\n")
         return 2
 
     return 0

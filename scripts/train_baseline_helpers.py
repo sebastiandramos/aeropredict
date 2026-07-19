@@ -12,6 +12,7 @@ import pandas.api.types as ptypes
 
 DROP_COLS = [
     "delay_target",
+    "delay_minutes",
     "schedule_missing",
     "icao24",
     "callsign",
