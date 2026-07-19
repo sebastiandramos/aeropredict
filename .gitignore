@@ -241,3 +241,7 @@ nul
 *.pptx
 *.docx
 *.xlsx
+
+# ML artifacts
+mlruns/
+models/
