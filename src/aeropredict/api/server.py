@@ -17,6 +17,7 @@ from time import perf_counter
 import mlflow
 import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, status
+from fastapi.security import APIKeyHeader
 
 from .models import (
     DelayPredictionRequest,
@@ -129,6 +130,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """Validate API key on prediction endpoints if API_KEY env var is set."""
+    api_key_required = os.environ.get("API_KEY")
+    if api_key_required and request.url.path.startswith("/predict"):
+        provided_key = request.headers.get("X-API-Key")
+        if not provided_key or provided_key != api_key_required:
+            return Response(
+                content='{"detail":"Invalid or missing API key"}',
+                status_code=401,
+                media_type="application/json",
+            )
+    response = await call_next(request)
+    return response
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -258,7 +277,7 @@ async def predict_delay(
         LOGGER.exception("Error during prediction: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
+            detail="Internal server error",
         ) from exc
 
 
@@ -353,5 +372,5 @@ async def predict_eta(
         LOGGER.exception("Error during ETA prediction: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
+            detail="Internal server error",
         ) from exc

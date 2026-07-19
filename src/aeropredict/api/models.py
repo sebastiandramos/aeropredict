@@ -29,7 +29,7 @@ class DelayPredictionRequest(BaseModel):
     weather_temperature_2m: float | None = None
     weather_precipitation: float | None = None
 
-    model_config = ConfigDict(from_attributes=True, frozen=True)
+    model_config = ConfigDict(from_attributes=True, frozen=True, extra="forbid")
 
 
 class DelayPredictionResponse(BaseModel):
@@ -44,7 +44,7 @@ class ETAPredictionRequest(BaseModel):
     scheduled_arrival: datetime
     features: DelayPredictionRequest
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class ETAPredictionResponse(BaseModel):
