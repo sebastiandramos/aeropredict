@@ -14,12 +14,13 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 from typing import Any, Dict, List
 
 import numpy as np
+import optuna
 import pandas as pd
 
 
@@ -344,7 +345,7 @@ Limitations: tuned on small dataset; final model trained on train+val and evalua
     NOTEPAD.parent.mkdir(parents=True, exist_ok=True)
     with NOTEPAD.open("a", encoding="utf-8") as fh:
         fh.write(
-            f"[{datetime.utcnow().isoformat()}] hpo_sweep completed. best_rmse={study.best_value:.4f}, test_rmse={test_metrics['rmse']:.4f}\n"
+            f"[{datetime.now(UTC).isoformat()}] hpo_sweep completed. best_rmse={study.best_value:.4f}, test_rmse={test_metrics['rmse']:.4f}\n"
         )
 
     print("Wrote best model to:", best_model_path)

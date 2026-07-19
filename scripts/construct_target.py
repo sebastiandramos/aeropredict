@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
@@ -169,7 +169,7 @@ def plot_distribution(df: pd.DataFrame) -> None:
 def append_notepad(stats: dict, removed: int) -> None:
     NOTEPAD.parent.mkdir(parents=True, exist_ok=True)
     with NOTEPAD.open("a", encoding="utf-8") as fh:
-        fh.write(f"[{datetime.utcnow().isoformat()}] constructed target dataset. rows_removed_for_missing_actual={removed}. stats={json.dumps(stats)}\n")
+        fh.write(f"[{datetime.now(UTC).isoformat()}] constructed target dataset. rows_removed_for_missing_actual={removed}. stats={json.dumps(stats)}\n")
 
 
 def main(argv: list[str] | None = None) -> int:

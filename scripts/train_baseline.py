@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Dict, List
 
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     metrics_path = out_dir / "baseline_metrics.json"
     metrics_with_meta = {
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "seed": seed,
         "counts": {"train": int(len(y_train)), "val": int(len(y_val)), "test": int(len(y_test))},
         "metrics": metrics,
@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     NOTEPAD.parent.mkdir(parents=True, exist_ok=True)
     with NOTEPAD.open("a", encoding="utf-8") as fh:
         fh.write(
-            f"[{datetime.utcnow().isoformat()}] baseline_lightgbm trained. test_rmse={metrics['test']['rmse']:.3f}, test_mae={metrics['test']['mae']:.3f}, test_r2={metrics['test']['r2']:.3f}\n"
+            f"[{datetime.now(UTC).isoformat()}] baseline_lightgbm trained. test_rmse={metrics['test']['rmse']:.3f}, test_mae={metrics['test']['mae']:.3f}, test_r2={metrics['test']['r2']:.3f}\n"
         )
 
     # Print concise summary

@@ -23,7 +23,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         val_df.to_parquet(out_dir / "val.parquet", index=False)
         test_df.to_parquet(out_dir / "test.parquet", index=False)
         json_path.write_text(json.dumps(splits, indent=2, default=str))
-        evidence_path.write_text(json.dumps({"created_at": datetime.utcnow().isoformat(), "summary": splits}, indent=2, default=str))
+        evidence_path.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "summary": splits}, indent=2, default=str))
         print("Wrote:", out_dir / "train.parquet", out_dir / "val.parquet", out_dir / "test.parquet")
         print("Wrote summary:", json_path)
 
@@ -246,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     NOTEPAD.parent.mkdir(parents=True, exist_ok=True)
     with NOTEPAD.open("a", encoding="utf-8") as fh:
         fh.write(
-            f"[{datetime.utcnow().isoformat()}] split_dataset created splits: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}, temporal_column={used_temporal}\n"
+            f"[{datetime.now(UTC).isoformat()}] split_dataset created splits: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}, temporal_column={used_temporal}\n"
         )
 
     return 0

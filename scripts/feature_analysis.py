@@ -50,8 +50,7 @@ def load_data() -> pd.DataFrame:
 def compute_correlations(df: pd.DataFrame) -> pd.Series:
     numeric = df.select_dtypes(include=["number"]).copy()
     if "target_delay" not in numeric.columns:
-        if "target_delay" in numeric.columns:
-            pass
+        raise KeyError("Column 'target_delay' not found in numeric columns")
     corr = numeric.corrwith(numeric["target_delay"]).drop(labels=["target_delay"])  # type: ignore[arg-type]
     return corr.abs().sort_values(ascending=False)
 

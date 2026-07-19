@@ -23,7 +23,7 @@ import argparse
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         best_entry = None
 
     # Prepare tags
-    training_date = datetime.utcnow().isoformat()
+    training_date = datetime.now(UTC).isoformat()
     features_count = len(features)
 
     # Prepare evidence log
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     notepad = Path(".omo/notepads/aeropredict-gap-closure/learnings.md")
     notepad.parent.mkdir(parents=True, exist_ok=True)
     with notepad.open("a", encoding="utf-8") as fh:
-        fh.write(f"[{datetime.utcnow().isoformat()}] register_model: attempted registration of {model_name} version_tag={version_tag} stage={stage}\n")
+        fh.write(f"[{datetime.now(UTC).isoformat()}] register_model: attempted registration of {model_name} version_tag={version_tag} stage={stage}\n")
 
     logger.info("Wrote evidence to %s", evidence_dir)
     return 0
