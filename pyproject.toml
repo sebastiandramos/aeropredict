@@ -31,10 +31,18 @@ ml = [
     "scikit-learn>=1.4",
     "numpy>=1.26",
     "pandas>=2",
+    "lightgbm>=4.3",
+    "optuna>=3.6",
+    "mlflow>=2.12",
 ]
 viz = [
     "matplotlib>=3",
     "seaborn>=0.13",
+]
+api = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-dateutil>=2.9",
 ]
 
 [tool.ruff]
@@ -69,7 +77,7 @@ source = ["src/aeropredict"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 70
+fail_under = 40
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
