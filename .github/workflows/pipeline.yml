@@ -136,7 +136,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Instalar dependencias
-        run: pip install -e .
+        run: pip install -e ".[ml,api]"
       - name: Validate MLflow model registry
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'file:./mlruns' }}
@@ -166,7 +166,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Instalar dependencias
-        run: pip install -e .
+        run: pip install -e ".[ml,api]"
       - name: Start API server
         run: |
           uvicorn src.aeropredict.api.server:app --host 0.0.0.0 --port 8000 &
