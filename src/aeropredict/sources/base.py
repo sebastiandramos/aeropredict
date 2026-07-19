@@ -53,7 +53,10 @@ def http_get_with_retry(
                 wait = retry_after if retry_after else _backoff_delay(attempt)
                 logger.warning(
                     "HTTP 429: %s (attempt %d/%d) → waiting %.1fs",
-                    url, attempt, MAX_RETRIES, wait,
+                    url,
+                    attempt,
+                    MAX_RETRIES,
+                    wait,
                 )
                 time.sleep(wait)
                 continue
@@ -73,6 +76,85 @@ def http_get_with_retry(
             status = e.response.status_code if e.response is not None else 0
             if status >= 500 and attempt < MAX_RETRIES:
                 logger.warning("HTTP %d: %s (attempt %d/%d)", status, url, attempt, MAX_RETRIES)
+                time.sleep(_backoff_delay(attempt))
+                last_exc = e
+            else:
+                raise
+        except requests.RequestException as e:
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = e
+
+    raise requests.RequestException(f"All {MAX_RETRIES} retries failed for {url}") from last_exc
+
+
+# ---------------------------------------------------------------------------
+# Utility: low-level HTTP POST con reintentos
+# ---------------------------------------------------------------------------
+
+
+def http_post_with_retry(
+    url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    data: dict[str, str] | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> Any:
+    """HTTP POST con backoff exponencial y jitter.
+
+    Reintenta en 429, 5xx, timeout y errores de conexión.
+    Respeta header ``Retry-After`` si está presente.
+
+    Returns:
+        Dict con la respuesta JSON.
+
+    Raises:
+        requests.RequestException: si fallan todos los reintentos.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                params=params,
+                data=data,
+                timeout=timeout,
+            )
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(resp)
+                wait = retry_after if retry_after else _backoff_delay(attempt)
+                logger.warning(
+                    "HTTP 429: %s (attempt %d/%d) → waiting %.1fs",
+                    url,
+                    attempt,
+                    MAX_RETRIES,
+                    wait,
+                )
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json() if resp.content else {}
+        except requests.Timeout:
+            logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = requests.Timeout(f"Timeout after {timeout}s: {url}")
+        except requests.ConnectionError as e:
+            logger.warning("Connection error: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = e
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status >= 500 and attempt < MAX_RETRIES:
+                logger.warning(
+                    "HTTP %d: %s (attempt %d/%d)",
+                    status,
+                    url,
+                    attempt,
+                    MAX_RETRIES,
+                )
                 time.sleep(_backoff_delay(attempt))
                 last_exc = e
             else:
