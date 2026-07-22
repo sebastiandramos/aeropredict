@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Script 1/3: OpenSky API → Bronze (Delta Lake).
+"""Script 1/5: OpenSky API → Bronze (Delta Lake).
 
 Extrae vuelos históricos de la API OpenSky y escribe el JSON crudo
 en la capa Bronze (Delta Lake), con dual-write a R2 + local.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
+"""Script 4/5: Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
 
 Copies the ``flights``, ``aircraft`` and ``weather`` collections from
 MongoDB into ``gold.flights``, ``gold.aircraft`` and ``gold.weather``
@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 
 from pymongo import MongoClient
 
@@ -139,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info("=" * 60)
-    logger.info("Entity sync: MongoDB → Gold")
+    logger.info("Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather)")
     logger.info("=" * 60)
 
     # -- Conexión --

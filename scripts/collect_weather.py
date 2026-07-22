@@ -1,5 +1,6 @@
-"""Colección de datos meteorológicos para aeropuertos.
+"""Script 1/5: Open-Meteo → Bronze (Delta Lake).
 
+Colección de datos meteorológicos para aeropuertos.
 Usa Open-Meteo historical archive para obtener datos horarios
 de temperatura, precipitación, viento, visibilidad, etc.
 """

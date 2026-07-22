@@ -1,5 +1,12 @@
 name: Pipeline de extracción diaria
 
+# Flujo ETL claro en 5 etapas:
+# 1) Extract: OpenSky flights + Open-Meteo weather → Bronze Delta
+# 2) Bronze → Silver: promote Bronze data a MongoDB
+# 3) Silver → Gold (flights): agrega vuelos en tablas analíticas
+# 4) Entity sync: copia entidades raw (flights, aircraft, weather) a Gold
+# 5) Feature store: construye la tabla gold.feature_store
+
 on:
   schedule:
     - cron: '30 6 * * *'   # 06:30 UTC (08:30 CEST)
@@ -31,7 +38,7 @@ jobs:
         run: doppler run -- python scripts/extract_opensky_to_bronze.py --days 2
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-      - name: Extraer OpenSky → Bronze Delta (R2)
+      - name: Extraer Open-Meteo → Bronze Delta (R2)
         run: doppler run -- python scripts/collect_weather.py --days 2
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -50,7 +57,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e .
       - uses: dopplerhq/cli-action@v3
-      - name: Bronze Delta (R2) → MongoDB Atlas
+      - name: Bronze Delta (R2) → MongoDB Atlas (flights + weather)
         run: doppler run -- python scripts/bronze_to_silver.py
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -69,7 +76,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e .
       - uses: dopplerhq/cli-action@v3
-      - name: MongoDB Atlas → Neon PostgreSQL
+      - name: MongoDB Atlas → Neon PostgreSQL (flights)
         run: doppler run -- python scripts/silver_to_gold.py
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -88,7 +95,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e .
       - uses: dopplerhq/cli-action@v3
-      - name: Sync aircraft + weather → PostgreSQL
+      - name: Sync MongoDB entity tables (flights, aircraft, weather) → PostgreSQL
         run: doppler run -- python scripts/silver_to_gold_entities.py
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

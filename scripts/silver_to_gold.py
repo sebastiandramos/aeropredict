@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Script 3/3: Silver (MongoDB) → Gold (PostgreSQL).
+"""Script 3/5: Silver (MongoDB) → Gold (PostgreSQL).
 
-Lee vuelos desde MongoDB, los convierte a objetos Flight y actualiza las
-tablas Gold en PostgreSQL (daily_airport_traffic, route_density, hourly_distribution).
+Este script sincroniza los vuelos que ya se ingireron en Silver hacia Gold.
+Actualmente se encarga de:
+
+- flights: convierte documentos MongoDB a objetos Flight y los escribe en Gold
 
 Uso:
     python scripts/silver_to_gold.py [--date YYYY-MM-DD] [--dry-run]
 
-Sin --date: detecta automáticamente fechas en Silver no procesadas en Gold.
+Sin --date: detecta automáticamente las fechas presentes en Silver que aún no
+han sido marcadas como procesadas en Gold.
 """
 
 from __future__ import annotations
@@ -51,7 +54,6 @@ _FIELD_MAP: dict[str, str] = {
     "departure_airport_candidates_count": "departure_airport_candidates_count",
     "arrival_airport_candidates_count": "arrival_airport_candidates_count",
 }
-
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -106,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
     logger.info("=" * 60)
-    logger.info("Script 3/3: Silver → Gold")
+    logger.info("Script 3/5: Silver → Gold (flights)")
     logger.info("=" * 60)
 
     # Early exit: --dry-run + --date no requiere conexión a BD
@@ -139,17 +141,15 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Fecha específica: %s", target_date)
     else:
         gold_dates = _get_gold_dates()
-        # MongoDB almacena flight_date como datetime con tz; PG como DATE.
-        # Normalizamos ambas a date para comparación correcta.
-        all_silver_dates = {
+        flight_dates = {
             d.date() if isinstance(d, datetime) else d
             for d in flights_col.distinct("flight_date")
             if d is not None
         }
-        pending_dates = sorted(all_silver_dates - gold_dates)
+        pending_dates = sorted(flight_dates - gold_dates)
         logger.info(
-            "Silver: %d fechas | Gold: %d fechas | Pendientes: %d",
-            len(all_silver_dates), len(gold_dates), len(pending_dates),
+            "Silver flights: %d fechas | Gold: %d fechas | Pendientes: %d",
+            len(flight_dates), len(gold_dates), len(pending_dates),
         )
 
     if not pending_dates:
@@ -168,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         docs = list(cursor)
         logger.info("--- Fecha %s: %d docs en Silver ---", target_date, len(docs))
 
+        logger.info("--- Fecha %s: %d docs en Silver (flights) ---", target_date, len(docs))
+
         if args.dry_run:
             logger.info("  DRY RUN: %d vuelos listos para Gold", len(docs))
             total_flights += len(docs)
@@ -177,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         if not docs:
             continue
 
-        # Convertir a Flight objects
+        # Convertir a Flight objects para la carga de vuelos en Gold
         flights: list[Flight] = []
         skipped = 0
         for doc in docs:
@@ -192,8 +194,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # Escribir a Gold
         try:
-            counts = write_flights_gold(flights)
-            logger.info("  Gold: %s", counts)
+            if flights:
+                counts = write_flights_gold(flights)
+                logger.info("  Gold flights: %s", counts)
         except Exception as e:
             logger.error("  Error escribiendo Gold para %s: %s", target_date, e)
             continue

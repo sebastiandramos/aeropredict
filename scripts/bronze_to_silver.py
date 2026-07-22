@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Script 2/3: Bronze (Delta Lake) → Silver (MongoDB).
+"""Script 2/5: promote datos de Bronze a Silver.
 
-Lee los JSON crudos de la capa Bronze, parsea los vuelos y los inserta
-en MongoDB (colección ``flights``).
+Este script procesa los registros crudos almacenados en Bronze (Delta Lake) y
+los convierte en documentos listos para MongoDB. Actualmente maneja dos tipos
+de ingestión:
+
+- vuelos OpenSky (`bronze/opensky`) → `flights` en MongoDB
+- datos meteorológicos Open-Meteo (`bronze/weather_openmeteo`) → `weather` en MongoDB
 
 Uso:
-    python scripts/bronze_to_silver.py [--date YYYY-MM-DD] [--dry-run]
+    python scripts/bronze_to_silver.py [--date YYYY-MM-DD] [--delta-root PATH] [--dry-run]
 
 Flujo:
-    Lee bronze/opensky DeltaTable → parse_flight_list() → write_flights_silver()
+    1. lee la tabla Delta Bronze
+    2. parsea los payloads crudos
+    3. escribe los documentos transformados en MongoDB
 """
 
 from __future__ import annotations
@@ -41,7 +47,12 @@ logger = logging.getLogger("bronze_to_silver")
 
 
 def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convierte un payload meteorológico de Bronze a documentos para la colección weather."""
+    """Construye documentos meteorológicos para MongoDB a partir de un payload Bronze.
+
+    El payload debe incluir claves de hora en la sección ``hourly`` y un
+    ``airport_code`` válido. Cada fila horaria se transforma en un documento
+    independiente con los valores meteorológicos correspondientes.
+    """
     hourly = payload.get("hourly", {})
     times = hourly.get("time", [])
     if not times:
@@ -69,7 +80,10 @@ def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _safe(arr: list[Any], idx: int) -> Any:
-    """Acceso seguro a lista por índice."""
+    """Devuelve el valor en el índice indicado o None si no existe.
+
+    Esto permite procesar arrays horarias incompletos sin lanzar excepciones.
+    """
     try:
         return arr[idx]
     except (IndexError, TypeError):
@@ -93,9 +107,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _get_bronze_dates(delta_root: str) -> list[date_type]:
-    """Obtiene todas las fechas con datos en bronze/opensky.
+    """Lista las fechas disponibles en la tabla Bronze de vuelos.
 
-    La tabla está particionada por ``ingestion_date`` (date32).
+    Lee las particiones de ``bronze/opensky`` y devuelve todas las fechas de
+    ``ingestion_date`` encontradas. Si ocurre un error, devuelve una lista vacía.
     """
     from deltalake import DeltaTable
 
@@ -196,7 +211,12 @@ def _read_bronze_flights(
 
 
 def _read_bronze_weather(delta_root: str, target_date: date_type | None = None) -> list[dict[str, Any]]:
-    """Lee los payloads meteorológicos desde Bronze y los convierte en docs para Silver."""
+    """Lee la tabla Bronze de weather y devuelve documentos para MongoDB.
+
+    Cada fila de Bronze contiene un payload crudo de Open-Meteo. Esta función
+    deserializa el JSON, extrae la sección ``hourly`` y construye los documentos
+    que se insertarán en la colección ``weather``.
+    """
     from deltalake import DeltaTable
 
     table_uri = str(Path(delta_root, "bronze", "weather_openmeteo"))
