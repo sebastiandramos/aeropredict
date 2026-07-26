@@ -23,6 +23,26 @@ BACKOFF_BASE = 1.0  # segundos
 
 
 # ---------------------------------------------------------------------------
+# Utility: parse JSON response safely
+# ---------------------------------------------------------------------------
+
+
+def _parse_json_response(resp: requests.Response, url: str) -> Any:
+    """Parse JSON from a response, raising a clear error for non-JSON bodies."""
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise ValueError(
+            f"Non-JSON response from {url} "
+            f"(status={resp.status_code}, "
+            f"content-type={resp.headers.get('content-type', '?')}): "
+            f"{resp.text[:200]}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # Utility: low-level HTTP GET con reintentos
 # ---------------------------------------------------------------------------
 
@@ -61,7 +81,7 @@ def http_get_with_retry(
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
-            return resp.json() if resp.content else {}
+            return _parse_json_response(resp, url)
         except requests.Timeout:
             logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
             if attempt < MAX_RETRIES:
@@ -134,7 +154,7 @@ def http_post_with_retry(
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
-            return resp.json() if resp.content else {}
+            return _parse_json_response(resp, url)
         except requests.Timeout:
             logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
             if attempt < MAX_RETRIES:
