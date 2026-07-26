@@ -40,9 +40,12 @@ from aeropredict.opensky.storage_silver import (
     close as close_silver,
 )
 from aeropredict.opensky.storage_silver import (
+    write_aena_infovuelos,
     write_flights_silver,
     write_weather,
 )
+from aeropredict.sources.aena_infovuelos import AenaInfovuelosAdapter
+from aeropredict.sources.airport_codes import get_icao_for_iata
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
 logger = logging.getLogger("bronze_to_silver")
@@ -261,6 +264,85 @@ def _read_bronze_weather(
     return weather_docs
 
 
+def _read_bronze_aena_infovuelos(
+    delta_root: str,
+    target_date: date_type | None = None,
+) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de AENA Infovuelos y devuelve documentos normalizados.
+
+    Cada fila de Bronze contiene ``params`` (JSON con airport y flightType)
+    y ``response`` (JSON con la lista de vuelos crudos de AENA). Esta función
+    deserializa ambos campos, normaliza cada vuelo con ``AenaInfovuelosAdapter``
+    y enriquece con el código ICAO del aeropuerto.
+    """
+    from deltalake import DeltaTable
+
+    table_uri = _build_table_uri(delta_root, "bronze", "aena_infovuelos")
+    logger.info("Leyendo Bronze AENA infovuelos: %s", table_uri)
+
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+    except Exception as exc:
+        logger.warning("No se pudo leer bronze/aena_infovuelos: %s", exc)
+        return []
+
+    table = dt.to_pyarrow_table()
+    if target_date:
+        import pyarrow as pa
+        import pyarrow.compute as pc
+
+        fetched_dates = pc.cast(
+            pc.floor_temporal(table.column("fetched_at"), unit="day"),
+            pa.date32(),
+        )
+        mask = pc.equal(fetched_dates, pa.scalar(target_date, type=pa.date32()))
+        table = table.filter(mask)
+
+    rows = table.to_pylist()
+    aena_docs: list[dict[str, Any]] = []
+    parse_errors = 0
+
+    for row in rows:
+        raw_params = row.get("params")
+        raw_response = row.get("response")
+        snapshot_at = row.get("fetched_at")
+        if not raw_params or not raw_response:
+            continue
+        try:
+            params = json.loads(raw_params)
+            flights_list = json.loads(raw_response)
+        except (TypeError, json.JSONDecodeError):
+            parse_errors += 1
+            continue
+
+        airport_iata = params.get("airport", "")
+        flight_type_code = params.get("flightType", "")
+
+        if not isinstance(flights_list, list):
+            continue
+
+        for raw_flight in flights_list:
+            try:
+                doc = AenaInfovuelosAdapter.normalize_flight(
+                    raw_flight, airport_iata, flight_type_code, snapshot_at,
+                )
+            except (KeyError, TypeError, ValueError):
+                parse_errors += 1
+                continue
+            doc["icao24_airport"] = get_icao_for_iata(
+                doc.get("aena_airport_iata", ""),
+            )
+            aena_docs.append(doc)
+
+    if parse_errors:
+        logger.warning("AENA infovuelos: %d errores de parseo", parse_errors)
+    logger.info(
+        "Bronze AENA: %d filas → %d docs infovuelos",
+        len(rows), len(aena_docs),
+    )
+    return aena_docs
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_daily_logger()
     args = _parse_args(argv)
@@ -298,11 +380,15 @@ def main(argv: list[str] | None = None) -> int:
     # Leer y parsear weather
     weather_docs = _read_bronze_weather(delta_root, target_date)
 
+    # Leer y parsear AENA infovuelos
+    aena_docs = _read_bronze_aena_infovuelos(delta_root, target_date)
+
     if args.dry_run:
         logger.info(
-            "DRY RUN: %d vuelos y %d weather docs listos para Silver (MongoDB)",
+            "DRY RUN: %d vuelos, %d weather docs y %d AENA docs listos para Silver (MongoDB)",
             len(flights),
             len(weather_docs),
+            len(aena_docs),
         )
         return 0
 
@@ -314,6 +400,9 @@ def main(argv: list[str] | None = None) -> int:
         if weather_docs:
             n_weather = write_weather(weather_docs)
             logger.info("Silver (MongoDB): %d weather docs insertados", n_weather)
+        if aena_docs:
+            n_aena = write_aena_infovuelos(aena_docs)
+            logger.info("Silver (MongoDB): %d AENA infovuelos insertados", n_aena)
         add_to_checkpoint_set(CHECKPOINT_COLLECTION, str(target_date))
     except Exception as e:
         logger.error("Error escribiendo a Silver: %s", e)
@@ -324,8 +413,8 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("=" * 60)
     logger.info(
-        "BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs",
-        len(flights), len(weather_docs),
+        "BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs, %d AENA docs",
+        len(flights), len(weather_docs), len(aena_docs),
     )
     logger.info("=" * 60)
     return 0
