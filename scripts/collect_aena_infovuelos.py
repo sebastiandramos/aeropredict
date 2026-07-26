@@ -22,7 +22,6 @@ from aeropredict.opensky.storage import write_raw_json
 from aeropredict.sources.aena_infovuelos import (
     FLIGHT_TYPE_LABELS,
     AenaInfovuelosAdapter,
-    normalize_flight,
 )
 
 logger = logging.getLogger("collect_aena_infovuelos")
@@ -80,6 +79,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None, help="Max rows per airport/type")
     parser.add_argument("--sleep", type=float, default=1.0, help="Seconds between requests")
     parser.add_argument("--no-json", action="store_true", help="Do not write raw JSON")
+    parser.add_argument("--no-csv", action="store_true", help="Do not write CSV output")
     parser.add_argument("--no-warmup", action="store_true", help="Skip initial page warmup")
     parser.add_argument(
         "--dry-run",
@@ -103,7 +103,13 @@ def expand_types(values: list[str]) -> list[str]:
         else:
             allowed = "arrivals, both, departures, L, S"
             raise ValueError(f"Invalid flight type {value!r}. Expected one of: {allowed}")
-    return list(dict.fromkeys(codes))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for c in codes:
+        if c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return unique
 
 
 def collect(
@@ -112,6 +118,7 @@ def collect(
     output_dir: Path,
     limit: int | None = None,
     sleep_seconds: float = 1.0,
+    write_csv: bool = True,
     write_json: bool = True,
     warmup: bool = True,
     dry_run: bool = False,
@@ -131,8 +138,8 @@ def collect(
 
     snapshot_at = datetime.now(UTC).replace(microsecond=0)
     stamp = snapshot_at.strftime("%Y%m%dT%H%M%SZ")
-    csv_path = output_dir / f"aena_infovuelos_{stamp}.csv"
-    json_path = output_dir / f"aena_infovuelos_{stamp}.json"
+    csv_path = output_dir / f"aena_infovuelos_{stamp}.csv" if write_csv else None
+    json_path = output_dir / f"aena_infovuelos_{stamp}.json" if write_json else None
 
     rows: list[dict[str, Any]] = []
     raw_batches: list[dict[str, Any]] = []
@@ -170,16 +177,17 @@ def collect(
                 }
             )
             rows.extend(
-                normalize_flight(raw, airport, flight_type, snapshot_at)
+                AenaInfovuelosAdapter.normalize_flight(raw, airport, flight_type, snapshot_at)
                 for raw in raw_flights
             )
 
-    with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        writer.writerows(rows)
+    if csv_path:
+        with csv_path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
 
-    if write_json:
+    if json_path:
         payload = {
             "source": "aena_infovuelos",
             "snapshot_at_utc": snapshot_at.isoformat(),
@@ -188,8 +196,6 @@ def collect(
             "batches": raw_batches,
         }
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    else:
-        json_path = None
 
     # Write raw batches to Bronze (Delta Lake)
     for batch in raw_batches:
@@ -202,7 +208,7 @@ def collect(
         )
 
     return {
-        "csv_path": str(csv_path),
+        "csv_path": str(csv_path) if csv_path else None,
         "json_path": str(json_path) if json_path else None,
         "rows": len(rows),
         "errors": len(errors),
@@ -218,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=Path(args.output_dir),
         limit=args.limit,
         sleep_seconds=args.sleep,
+        write_csv=not args.no_csv,
         write_json=not args.no_json,
         warmup=not args.no_warmup,
         dry_run=args.dry_run,
@@ -231,7 +238,8 @@ def main(argv: list[str] | None = None) -> int:
             result["rows"],
             result["errors"],
         )
-        logger.info("CSV: %s", result["csv_path"])
+        if result["csv_path"]:
+            logger.info("CSV: %s", result["csv_path"])
         if result["json_path"]:
             logger.info("JSON: %s", result["json_path"])
     return 1 if result["errors"] else 0

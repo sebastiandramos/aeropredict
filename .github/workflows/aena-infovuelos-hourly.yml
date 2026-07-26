@@ -49,9 +49,3 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
-      - name: Upload snapshot artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aena-infovuelos-${{ github.run_id }}
-          path: data/raw/aena_infovuelos/
-          retention-days: 30
