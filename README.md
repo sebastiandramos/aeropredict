@@ -7,11 +7,12 @@ TFM — Predicción de retrasos de vuelos.
 ### Flujo completo (producción)
 
 ```
-GitHub Actions (cron 07:00 / 20:00 UTC)
+GitHub Actions (cron 06:30 / 19:30 UTC)
   ↓
-extract_to_bronze.py → Bronze (R2)
+extract_opensky_to_bronze.py → Bronze (R2)
+collect_weather.py           → Bronze (R2) — Open-Meteo weather
   ↓
-bronze_to_silver.py → Silver (MongoDB Atlas)
+bronze_to_silver.py → Silver (MongoDB Atlas) — flights + weather
   ↓
 silver_to_gold.py          → Gold (PostgreSQL — Neon) — agregaciones de vuelos
 silver_to_gold_entities.py → Gold (PostgreSQL — Neon) — tablas entidad raw

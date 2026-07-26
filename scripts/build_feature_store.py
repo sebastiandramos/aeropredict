@@ -20,6 +20,8 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
+import psycopg2
+from psycopg2.extras import execute_values
 from pymongo import MongoClient
 
 from aeropredict.opensky.checkpoint_mongo import (
@@ -282,6 +284,7 @@ def build_feature_store(
         dep_key = (dep, flight_date)
         arr_key = (arr, flight_date)
         dep_hourly_key = (dep, flight_date, departure_hour) if departure_hour is not None else None
+        # NOTE: uses departure_hour for arrival side too (arrival_hour unavailable)
         arr_hourly_key = (arr, flight_date, departure_hour) if departure_hour is not None else None
 
         route_total_density = rtd if rtd is not None else 0
@@ -332,7 +335,7 @@ def build_feature_store(
         logger.warning("No hay filas para insertar")
         return 0
 
-    # -- Insert a PostgreSQL --
+    # -- Insert a PostgreSQL (chunked para NeonDB SSL) --
     insert_sql = """
         INSERT INTO gold.feature_store (
             icao24, flight_date, callsign, departure_airport, arrival_airport,
@@ -348,13 +351,40 @@ def build_feature_store(
         ON CONFLICT (icao24, flight_date) DO NOTHING
     """
 
-    from psycopg2.extras import execute_values
-    with pg_conn.cursor() as cur:
-        execute_values(cur, insert_sql, rows, page_size=1000)
-    pg_conn.commit()
+    batch_size = 2000
+    total_batches = (len(rows) + batch_size - 1) // batch_size
+    inserted = 0
+    max_retries = 3
 
-    logger.info("Feature store: %d filas insertadas", len(rows))
-    return len(rows)
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Ensure connection is alive
+                if pg_conn.closed:
+                    pg_conn = _get_conn()
+                with pg_conn.cursor() as cur:
+                    execute_values(cur, insert_sql, batch, page_size=1000)
+                pg_conn.commit()
+                inserted += len(batch)
+                logger.info(
+                    "Insertado lote %d/%d (%d filas)...", batch_num, total_batches, len(batch)
+                )
+                break
+            except psycopg2.OperationalError:
+                logger.warning(
+                    "Conexión perdida en lote %d, reintento %d/%d",
+                    batch_num, attempt, max_retries,
+                )
+                if attempt < max_retries:
+                    pg_conn = _get_conn()
+                else:
+                    raise
+
+    logger.info("Feature store: %d filas insertadas", inserted)
+    return inserted
 
 
 def main() -> None:

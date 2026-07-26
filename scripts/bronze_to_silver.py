@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Script 2/3: Bronze (Delta Lake) → Silver (MongoDB).
+"""Script 2/5: promote datos de Bronze a Silver.
 
-Lee los JSON crudos de la capa Bronze, parsea los vuelos y los inserta
-en MongoDB (colección ``flights``).
+Este script procesa los registros crudos almacenados en Bronze (Delta Lake) y
+los convierte en documentos listos para MongoDB. Actualmente maneja dos tipos
+de ingestión:
+
+- vuelos OpenSky (`bronze/opensky`) → `flights` en MongoDB
+- datos meteorológicos Open-Meteo (`bronze/weather_openmeteo`) → `weather` en MongoDB
 
 Uso:
-    python scripts/bronze_to_silver.py [--date YYYY-MM-DD] [--dry-run]
+    python scripts/bronze_to_silver.py [--date YYYY-MM-DD] [--delta-root PATH] [--dry-run]
 
 Flujo:
-    Lee bronze/opensky DeltaTable → parse_flight_list() → write_flights_silver()
+    1. lee la tabla Delta Bronze
+    2. parsea los payloads crudos
+    3. escribe los documentos transformados en MongoDB
 """
 
 from __future__ import annotations
@@ -18,8 +24,7 @@ import json
 import logging
 import sys
 import time
-from datetime import UTC, datetime, date as date_type
-from pathlib import Path
+from datetime import date as date_type
 from typing import Any
 
 from aeropredict.opensky.checkpoint_mongo import (
@@ -30,15 +35,66 @@ from aeropredict.opensky.config import get_delta_root, get_storage_options
 from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
-from aeropredict.opensky.storage_silver import write_flights_silver, close as close_silver
+from aeropredict.opensky.storage import _build_table_uri
+from aeropredict.opensky.storage_silver import (
+    close as close_silver,
+)
+from aeropredict.opensky.storage_silver import (
+    write_flights_silver,
+    write_weather,
+)
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
 logger = logging.getLogger("bronze_to_silver")
 
 
+def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Construye documentos meteorológicos para MongoDB a partir de un payload Bronze.
+
+    El payload debe incluir claves de hora en la sección ``hourly`` y un
+    ``airport_code`` válido. Cada fila horaria se transforma en un documento
+    independiente con los valores meteorológicos correspondientes.
+    """
+    hourly = payload.get("hourly", {})
+    times = hourly.get("time", [])
+    if not times:
+        return []
+
+    airport_code = payload.get("airport_code")
+    if not airport_code:
+        return []
+
+    docs: list[dict[str, Any]] = []
+    for i, timestamp in enumerate(times):
+        docs.append({
+            "airport_code": airport_code,
+            "timestamp": timestamp,
+            "flight_date": timestamp[:10],
+            "temperature_2m": _safe(hourly.get("temperature_2m", []), i),
+            "precipitation": _safe(hourly.get("precipitation", []), i),
+            "wind_speed_10m": _safe(hourly.get("wind_speed_10m", []), i),
+            "wind_gusts_10m": _safe(hourly.get("wind_gusts_10m", []), i),
+            "visibility": _safe(hourly.get("visibility", []), i),
+            "cloud_cover": _safe(hourly.get("cloud_cover", []), i),
+            "relative_humidity_2m": _safe(hourly.get("relative_humidity_2m", []), i),
+        })
+    return docs
+
+
+def _safe(arr: list[Any], idx: int) -> Any:
+    """Devuelve el valor en el índice indicado o None si no existe.
+
+    Esto permite procesar arrays horarias incompletos sin lanzar excepciones.
+    """
+    try:
+        return arr[idx]
+    except (IndexError, TypeError):
+        return None
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 2/3: Procesa Bronze (Delta Lake) → Silver (MongoDB)",
+        description="Script 2/5: Procesa Bronze (Delta Lake) → Silver (MongoDB)",
     )
     parser.add_argument(
         "--date", type=str, default=None,
@@ -53,14 +109,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _get_bronze_dates(delta_root: str) -> list[date_type]:
-    """Obtiene todas las fechas con datos en bronze/opensky.
+    """Lista las fechas disponibles en la tabla Bronze de vuelos.
 
-    La tabla está particionada por ``ingestion_date`` (date32).
+    Lee las particiones de ``bronze/opensky`` y devuelve todas las fechas de
+    ``ingestion_date`` encontradas. Si ocurre un error, devuelve una lista vacía.
     """
     from deltalake import DeltaTable
 
     try:
-        table_uri = str(Path(delta_root, "bronze", "opensky"))
+        table_uri = _build_table_uri(delta_root, "bronze", "opensky")
         dt = DeltaTable(table_uri, storage_options=get_storage_options())
         partitions = dt.partitions()
         # Cada partición: {ingestion_date: YYYY-MM-DD}
@@ -96,15 +153,15 @@ def _read_bronze_flights(
     """
     from deltalake import DeltaTable
 
-    table_uri = str(Path(delta_root, "bronze", "opensky"))
+    table_uri = _build_table_uri(delta_root, "bronze", "opensky")
     logger.info("Leyendo Bronze: %s", table_uri)
 
     dt = DeltaTable(table_uri, storage_options=get_storage_options())
 
     # Filtrar por fecha si se especifica
     if target_date:
-        import pyarrow.compute as pc
         import pyarrow as pa
+        import pyarrow.compute as pc
 
         table = dt.to_pyarrow_table()
         date_scalar = pa.scalar(target_date, type=pa.date32())
@@ -155,13 +212,62 @@ def _read_bronze_flights(
     return deduped
 
 
+def _read_bronze_weather(
+    delta_root: str, target_date: date_type | None = None
+) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de weather y devuelve documentos para MongoDB.
+
+    Cada fila de Bronze contiene un payload crudo de Open-Meteo. Esta función
+    deserializa el JSON, extrae la sección ``hourly`` y construye los documentos
+    que se insertarán en la colección ``weather``.
+    """
+    from deltalake import DeltaTable
+
+    table_uri = _build_table_uri(delta_root, "bronze", "weather_openmeteo")
+    logger.info("Leyendo Bronze weather: %s", table_uri)
+
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+    except Exception as exc:
+        logger.warning("No se pudo leer bronze/weather_openmeteo: %s", exc)
+        return []
+
+    table = dt.to_pyarrow_table()
+    if target_date:
+        import pyarrow as pa
+        import pyarrow.compute as pc
+
+        # weather_openmeteo has `fetched_at` (timestamp), not `ingestion_date`
+        fetched_dates = pc.cast(
+            pc.floor_temporal(table.column("fetched_at"), unit="day"),
+            pa.date32(),
+        )
+        mask = pc.equal(fetched_dates, pa.scalar(target_date, type=pa.date32()))
+        table = table.filter(mask)
+
+    rows = table.to_pylist()
+    weather_docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            payload = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        weather_docs.extend(_build_weather_docs(payload))
+
+    logger.info("Bronze weather: %d filas → %d docs weather", len(rows), len(weather_docs))
+    return weather_docs
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_daily_logger()
     args = _parse_args(argv)
     delta_root = args.delta_root or get_delta_root()
 
     logger.info("=" * 60)
-    logger.info("Script 2/3: Bronze → Silver")
+    logger.info("Script 2/5: Bronze → Silver")
     logger.info("Delta root: %s", delta_root)
     logger.info("=" * 60)
 
@@ -186,24 +292,28 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("%s ya procesado a Silver (checkpoint), saltando", target_date)
         return 0
 
-    # Leer y parsear
+    # Leer y parsear vuelos
     flights = _read_bronze_flights(delta_root, target_date, dry_run=args.dry_run)
+
+    # Leer y parsear weather
+    weather_docs = _read_bronze_weather(delta_root, target_date)
 
     if args.dry_run:
         logger.info(
-            "DRY RUN: %d vuelos listos para Silver (MongoDB)",
+            "DRY RUN: %d vuelos y %d weather docs listos para Silver (MongoDB)",
             len(flights),
+            len(weather_docs),
         )
-        return 0
-
-    if not flights:
-        logger.info("No hay vuelos nuevos para insertar en Silver")
         return 0
 
     # Escribir a Silver (MongoDB)
     try:
-        n = write_flights_silver(flights)
-        logger.info("Silver (MongoDB): %d vuelos insertados", n)
+        if flights:
+            n_flights = write_flights_silver(flights)
+            logger.info("Silver (MongoDB): %d vuelos insertados", n_flights)
+        if weather_docs:
+            n_weather = write_weather(weather_docs)
+            logger.info("Silver (MongoDB): %d weather docs insertados", n_weather)
         add_to_checkpoint_set(CHECKPOINT_COLLECTION, str(target_date))
     except Exception as e:
         logger.error("Error escribiendo a Silver: %s", e)
@@ -213,7 +323,10 @@ def main(argv: list[str] | None = None) -> int:
         close_silver()
 
     logger.info("=" * 60)
-    logger.info("BRONZE→SILVER COMPLETADO: %d vuelos", len(flights))
+    logger.info(
+        "BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs",
+        len(flights), len(weather_docs),
+    )
     logger.info("=" * 60)
     return 0
 

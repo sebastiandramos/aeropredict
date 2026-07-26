@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
+"""Script 4/5: Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
 
 Copies the ``flights``, ``aircraft`` and ``weather`` collections from
 MongoDB into ``gold.flights``, ``gold.aircraft`` and ``gold.weather``
@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 
 from pymongo import MongoClient
 
@@ -22,10 +23,12 @@ from aeropredict.opensky.checkpoint_mongo import (
 )
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import (
-    write_flights_gold_raw,
-    write_aircraft_gold,
-    write_weather_gold,
     _get_conn as get_gold_conn,
+)
+from aeropredict.opensky.storage_gold import (
+    write_aircraft_gold,
+    write_flights_gold_raw,
+    write_weather_gold,
 )
 
 CHECKPOINT_COLLECTION = "silver_to_gold_entities"
@@ -139,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info("=" * 60)
-    logger.info("Entity sync: MongoDB → Gold")
+    logger.info("Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather)")
     logger.info("=" * 60)
 
     # -- Conexión --
@@ -150,9 +153,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         stats = _stats()
         logger.info("Stats actuales:")
-        logger.info("  flights:  MongoDB=%d  Gold=%d", stats["mongo_flights"], stats["gold_flights"])
-        logger.info("  aircraft: MongoDB=%d  Gold=%d", stats["mongo_aircraft"], stats["gold_aircraft"])
-        logger.info("  weather:  MongoDB=%d  Gold=%d", stats["mongo_weather"], stats["gold_weather"])
+        logger.info(
+            "  flights:  MongoDB=%d  Gold=%d",
+            stats["mongo_flights"], stats["gold_flights"],
+        )
+        logger.info(
+            "  aircraft: MongoDB=%d  Gold=%d",
+            stats["mongo_aircraft"], stats["gold_aircraft"],
+        )
+        logger.info(
+            "  weather:  MongoDB=%d  Gold=%d",
+            stats["mongo_weather"], stats["gold_weather"],
+        )
 
         pending_flights = stats["mongo_flights"] - stats["gold_flights"]
         pending_aircraft = stats["mongo_aircraft"] - stats["gold_aircraft"]
@@ -173,10 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     # Limpiar checkpoints si --force
     if args.force:
         logger.info("Force mode: eliminando checkpoints previos...")
-        mdb["checkpoints"].update_one(
-            {"_id": "dates_done"},
-            {"$set": {"dates": []}},
-        )
+        mdb[CHECKPOINT_COLLECTION].delete_many({})
 
     # -- Sync entities --
     logger.info("Sincronizando entidades...")
