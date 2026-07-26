@@ -177,17 +177,3 @@ class AenaInfovuelosAdapter(BaseAdapter):
             return None
         return parsed.isoformat(timespec="seconds")
 
-
-def normalize_flight(
-    raw: dict[str, Any],
-    query_airport_iata: str,
-    query_flight_type: str,
-    snapshot_at_utc: datetime,
-) -> dict[str, Any]:
-    """Deprecated: use AenaInfovuelosAdapter.normalize_flight()."""
-    return AenaInfovuelosAdapter.normalize_flight(
-        raw,
-        query_airport_iata,
-        query_flight_type,
-        snapshot_at_utc,
-    )

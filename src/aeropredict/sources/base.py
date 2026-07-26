@@ -106,7 +106,7 @@ def http_post_with_retry(
     Respeta header ``Retry-After`` si está presente.
 
     Returns:
-        Dict con la respuesta JSON.
+        JSON response (dict or list) parsed from the response body.
 
     Raises:
         requests.RequestException: si fallan todos los reintentos.
