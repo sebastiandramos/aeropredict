@@ -185,10 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     # Limpiar checkpoints si --force
     if args.force:
         logger.info("Force mode: eliminando checkpoints previos...")
-        mdb["checkpoints"].update_one(
-            {"_id": "dates_done"},
-            {"$set": {"dates": []}},
-        )
+        mdb[CHECKPOINT_COLLECTION].delete_many({})
 
     # -- Sync entities --
     logger.info("Sincronizando entidades...")

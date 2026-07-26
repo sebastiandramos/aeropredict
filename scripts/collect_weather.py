@@ -93,7 +93,7 @@ def _has_weather(airport: str, date: str) -> bool:
     db = client.get_database()
     exists = db["weather"].find_one({
         "airport_code": airport,
-        "start_date": date,
+        "flight_date": date,
     }) is not None
     client.close()
     return exists
@@ -189,14 +189,6 @@ def collect_weather(
         "skipped": skipped,
         "errors": errors,
     }
-
-
-def _safe(arr: list[Any], idx: int) -> Any:
-    """Acceso seguro a lista por índice."""
-    try:
-        return arr[idx]
-    except (IndexError, TypeError):
-        return None
 
 
 def main() -> None:
