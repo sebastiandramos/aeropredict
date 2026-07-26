@@ -18,7 +18,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import UTC, datetime, date as date_type
+from datetime import date as date_type
+from datetime import datetime
 from typing import Any
 
 import pymongo
@@ -31,8 +32,10 @@ from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_gold import (
-    write_flights_gold,
     close as close_gold,
+)
+from aeropredict.opensky.storage_gold import (
+    write_flights_gold,
 )
 
 CHECKPOINT_COLLECTION = "silver_to_gold_dates"

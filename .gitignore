@@ -224,3 +224,34 @@ data/*
 tmp/
 AGENTS.md
 .vscode/settings.json
+
+# Temporary / scratch venvs
+.venv_temp/
+
+# ML tracking & model artifacts
+mlruns/
+models/
+
+# Ad-hoc debug / exploration scripts
+_check_cp.py
+_status.py
+check_all_checkpoints.py
+check_aviationstack.py
+check_bronze_dates.py
+check_checkpoint.py
+check_credits.py
+check_matches.py
+check_raw_checkpoint.py
+check_schedules.py
+fetch_100_flights.py
+save_and_match.py
+save_simple.py
+save_to_bronze.py
+test_avstack.py
+test_avstack_free.py
+test_key.py
+
+# Presentation / deliverable files
+*.pptx
+*.xlsx
+*.docx

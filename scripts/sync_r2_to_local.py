@@ -22,7 +22,8 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any
+
+import pyarrow as pa
 
 from aeropredict.opensky.config import get_delta_root, get_storage_options
 from aeropredict.opensky.logging_config import setup_daily_logger

@@ -24,7 +24,7 @@ import json
 import logging
 import sys
 import time
-from datetime import UTC, datetime, date as date_type
+from datetime import date as date_type
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +37,11 @@ from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage_silver import (
+    close as close_silver,
+)
+from aeropredict.opensky.storage_silver import (
     write_flights_silver,
     write_weather,
-    close as close_silver,
 )
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
@@ -158,8 +160,8 @@ def _read_bronze_flights(
 
     # Filtrar por fecha si se especifica
     if target_date:
-        import pyarrow.compute as pc
         import pyarrow as pa
+        import pyarrow.compute as pc
 
         table = dt.to_pyarrow_table()
         date_scalar = pa.scalar(target_date, type=pa.date32())
@@ -210,7 +212,9 @@ def _read_bronze_flights(
     return deduped
 
 
-def _read_bronze_weather(delta_root: str, target_date: date_type | None = None) -> list[dict[str, Any]]:
+def _read_bronze_weather(
+    delta_root: str, target_date: date_type | None = None
+) -> list[dict[str, Any]]:
     """Lee la tabla Bronze de weather y devuelve documentos para MongoDB.
 
     Cada fila de Bronze contiene un payload crudo de Open-Meteo. Esta función
@@ -230,8 +234,8 @@ def _read_bronze_weather(delta_root: str, target_date: date_type | None = None) 
 
     table = dt.to_pyarrow_table()
     if target_date:
-        import pyarrow.compute as pc
         import pyarrow as pa
+        import pyarrow.compute as pc
 
         date_scalar = pa.scalar(target_date, type=pa.date32())
         mask = pc.equal(table.column("ingestion_date"), date_scalar)
@@ -315,7 +319,10 @@ def main(argv: list[str] | None = None) -> int:
         close_silver()
 
     logger.info("=" * 60)
-    logger.info("BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs", len(flights), len(weather_docs))
+    logger.info(
+        "BRONZE→SILVER COMPLETADO: %d vuelos, %d weather docs",
+        len(flights), len(weather_docs),
+    )
     logger.info("=" * 60)
     return 0
 

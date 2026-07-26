@@ -35,8 +35,6 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pyarrow as pa
-
 from aeropredict.opensky.config import get_delta_root
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.storage import write_raw
@@ -132,7 +130,10 @@ def generate_samples(mock_dir: Path, days: int = 1) -> None:
             existing = json.loads(fpath.read_text()) if fpath.exists() else []
             merged = existing + flist
             fpath.write_text(json.dumps(merged, indent=2))
-            logger.info("  %s %s %s: %d vuelos → %s", date_str, airport, endpoint, len(merged), fpath)
+            logger.info(
+                "  %s %s %s: %d vuelos → %s",
+                date_str, airport, endpoint, len(merged), fpath,
+            )
             written_any = True
 
     if written_any:
@@ -176,7 +177,11 @@ def _discover_mock_data(mock_dir: Path) -> list[dict]:
                 continue
             airport, endpoint = parts
             if endpoint not in ("arrivals", "departures"):
-                logger.warning("  Endpoint desconocido: %s (esperado arrivals/departures)", json_file)
+                logger.warning(
+                    "  Endpoint desconocido: %s"
+                    " (esperado arrivals/departures)",
+                    json_file,
+                )
                 continue
 
             discovered.append({
@@ -206,7 +211,7 @@ def process_mock_data(
     logger.info("Descubiertos %d archivos mock", len(files))
 
     # Agrupar por fecha
-    dates = sorted(set(f["date"] for f in files))
+    dates = sorted({f["date"] for f in files})
     total_written = 0
     total_errors = 0
     results: list[dict] = []
@@ -318,7 +323,10 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("=" * 60)
     logger.info("Mock Extract → Bronze")
-    logger.info("Mock dir: %s | Dry-run: %s | Delta root: %s", args.mock_dir, args.dry_run, delta_root)
+    logger.info(
+        "Mock dir: %s | Dry-run: %s | Delta root: %s",
+        args.mock_dir, args.dry_run, delta_root,
+    )
 
     if args.generate_samples:
         logger.info("Generando datos de muestra...")

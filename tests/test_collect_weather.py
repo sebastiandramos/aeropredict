@@ -14,7 +14,12 @@ def _load_collect_weather_module():
 def test_collect_weather_only_writes_bronze(monkeypatch):
     module = _load_collect_weather_module()
 
-    monkeypatch.setattr(module, "_get_airport_date_ranges", lambda airport=None: [("LEAL", "2026-06-01", "2026-06-02")])
+    monkeypatch.setattr(
+        module, "_get_airport_date_ranges",
+        lambda airport=None: [
+            ("LEAL", "2026-06-01", "2026-06-02")
+        ],
+    )
     monkeypatch.setattr(module, "_has_weather", lambda airport, date: False)
 
     class DummyAdapter:
@@ -45,7 +50,10 @@ def test_collect_weather_only_writes_bronze(monkeypatch):
 
     monkeypatch.setattr(module, "write_raw_json", fake_write_raw_json)
 
-    stats = module.collect_weather(airport="LEAL", days_back=2, dry_run=False, delta_root="data/raw")
+    stats = module.collect_weather(
+        airport="LEAL", days_back=2,
+        dry_run=False, delta_root="data/raw",
+    )
 
     assert stats["weather_written"] == 1
     assert raw_calls

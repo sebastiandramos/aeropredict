@@ -7,9 +7,9 @@ TFM — Predicción de retrasos de vuelos.
 ### Flujo completo (producción)
 
 ```
-GitHub Actions (cron 07:00 / 20:00 UTC)
+GitHub Actions (cron 06:30 / 19:30 UTC)
   ↓
-extract_to_bronze.py → Bronze (R2)
+extract_opensky_to_bronze.py → Bronze (R2)
   ↓
 bronze_to_silver.py → Silver (MongoDB Atlas)
   ↓
