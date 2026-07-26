@@ -60,7 +60,7 @@ _FIELD_MAP: dict[str, str] = {
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 3/3: Procesa Silver (MongoDB) → Gold (PostgreSQL)",
+        description="Script 3/5: Procesa Silver (MongoDB) → Gold (PostgreSQL)",
     )
     parser.add_argument(
         "--date", type=str, default=None,
@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     uri = get_mongo_uri()
-    logger.info("Conectando a MongoDB: %s", uri)
+    logger.debug("Conectando a MongoDB: %s", uri)
 
     try:
         mongo_client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)

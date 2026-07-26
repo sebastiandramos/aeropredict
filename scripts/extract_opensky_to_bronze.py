@@ -49,7 +49,7 @@ MIN_CREDITS = 0
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 1/3: Extrae vuelos OpenSky y escribe en Bronze (Delta Lake)",
+        description="Script 1/5: Extrae vuelos OpenSky y escribe en Bronze (Delta Lake)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     delta_root = get_delta_root()
 
     logger.info("=" * 60)
-    logger.info("Script 1/3: Extract → Bronze")
+    logger.info("Script 1/5: Extract → Bronze")
     logger.info("Dry-run: %s | Days: %d | Delta root: %s", args.dry_run, args.days, delta_root)
     if args.backfill:
         logger.info(

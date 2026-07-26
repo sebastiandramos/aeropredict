@@ -173,7 +173,7 @@ def _get_conn():
     global _conn
     if _conn is None or _conn.closed:
         uri = get_postgres_uri()
-        logger.info("Conectando a PostgreSQL: %s", uri)
+        logger.debug("Conectando a PostgreSQL: %s", uri)
         _conn = psycopg2.connect(uri)
         _conn.autocommit = True
         with _conn.cursor() as cur:

@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Step 1: Extract to Bronze
     if not args.skip_bronze:
-        logger.info("--- Paso 1/3: Extract → Bronze ---")
+        logger.info("--- Paso 1/5: Extract → Bronze ---")
         from scripts.extract_opensky_to_bronze import main as bronze_main
 
         bronze_args = ["--days", str(args.days)]
@@ -68,11 +68,11 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("Bronze falló (rc=%d), deteniendo pipeline", rc)
             return rc
     else:
-        logger.info("--- Paso 1/3: Bronze SKIP ---")
+        logger.info("--- Paso 1/5: Bronze SKIP ---")
 
     # Step 2: Bronze to Silver
     if not args.skip_silver:
-        logger.info("--- Paso 2/3: Bronze → Silver ---")
+        logger.info("--- Paso 2/5: Bronze → Silver ---")
         from scripts.bronze_to_silver import main as silver_main
 
         silver_args = []
@@ -85,11 +85,11 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("Silver falló (rc=%d), deteniendo pipeline", rc)
             return rc
     else:
-        logger.info("--- Paso 2/3: Silver SKIP ---")
+        logger.info("--- Paso 2/5: Silver SKIP ---")
 
     # Step 3: Silver to Gold
     if not args.skip_gold:
-        logger.info("--- Paso 3/3: Silver → Gold ---")
+        logger.info("--- Paso 3/5: Silver → Gold ---")
         from scripts.silver_to_gold import main as gold_main
 
         gold_args = []
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("Gold falló (rc=%d)", rc)
             return rc
     else:
-        logger.info("--- Paso 3/3: Gold SKIP ---")
+        logger.info("--- Paso 3/5: Gold SKIP ---")
 
     elapsed = time.time() - start
     logger.info("=" * 60)

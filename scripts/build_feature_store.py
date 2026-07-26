@@ -284,6 +284,7 @@ def build_feature_store(
         dep_key = (dep, flight_date)
         arr_key = (arr, flight_date)
         dep_hourly_key = (dep, flight_date, departure_hour) if departure_hour is not None else None
+        # NOTE: uses departure_hour for arrival side too (arrival_hour unavailable)
         arr_hourly_key = (arr, flight_date, departure_hour) if departure_hour is not None else None
 
         route_total_density = rtd if rtd is not None else 0

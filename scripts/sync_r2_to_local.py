@@ -36,7 +36,7 @@ TABLES_TO_SYNC: list[str] = [
     "bronze/opensky",
     "bronze/schedules_aviationstack",
     "bronze/schedules_aerodatabox",
-    "bronze/weather",
+    "bronze/weather_openmeteo",
     "silver/flights",
     "silver/state_vectors",
     "silver/tracks",

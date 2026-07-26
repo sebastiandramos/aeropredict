@@ -94,7 +94,7 @@ def _safe(arr: list[Any], idx: int) -> Any:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 2/3: Procesa Bronze (Delta Lake) → Silver (MongoDB)",
+        description="Script 2/5: Procesa Bronze (Delta Lake) → Silver (MongoDB)",
     )
     parser.add_argument(
         "--date", type=str, default=None,
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     delta_root = args.delta_root or get_delta_root()
 
     logger.info("=" * 60)
-    logger.info("Script 2/3: Bronze → Silver")
+    logger.info("Script 2/5: Bronze → Silver")
     logger.info("Delta root: %s", delta_root)
     logger.info("=" * 60)
 

@@ -37,7 +37,7 @@ def _connect() -> None:
     global _client
     if _client is None:
         uri = get_mongo_uri()
-        logger.info("Conectando a MongoDB: %s", uri)
+        logger.debug("Conectando a MongoDB: %s", uri)
         _client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)
         _client.admin.command("ping")
 
