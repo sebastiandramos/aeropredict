@@ -237,8 +237,12 @@ def _read_bronze_weather(
         import pyarrow as pa
         import pyarrow.compute as pc
 
-        date_scalar = pa.scalar(target_date, type=pa.date32())
-        mask = pc.equal(table.column("ingestion_date"), date_scalar)
+        # weather_openmeteo has `fetched_at` (timestamp), not `ingestion_date`
+        fetched_dates = pc.cast(
+            pc.floor_temporal(table.column("fetched_at"), unit="day"),
+            pa.date32(),
+        )
+        mask = pc.equal(fetched_dates, pa.scalar(target_date, type=pa.date32()))
         table = table.filter(mask)
 
     rows = table.to_pylist()
