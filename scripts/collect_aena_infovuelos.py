@@ -154,7 +154,7 @@ def collect(
             label = FLIGHT_TYPE_LABELS.get(flight_type, flight_type)
             logger.info("Fetching AENA %s %s", airport, label)
             try:
-                raw_flights = adapter.get_flights(airport, flight_type)
+                raw_flights = adapter.get_flights(airport, label)
             except Exception as exc:
                 logger.warning("AENA error %s %s: %s", airport, label, exc)
                 errors.append(
