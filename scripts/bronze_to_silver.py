@@ -25,7 +25,6 @@ import logging
 import sys
 import time
 from datetime import date as date_type
-from pathlib import Path
 from typing import Any
 
 from aeropredict.opensky.checkpoint_mongo import (
@@ -36,6 +35,7 @@ from aeropredict.opensky.config import get_delta_root, get_storage_options
 from aeropredict.opensky.extract_flights import parse_flight_list
 from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
+from aeropredict.opensky.storage import _build_table_uri
 from aeropredict.opensky.storage_silver import (
     close as close_silver,
 )
@@ -117,7 +117,7 @@ def _get_bronze_dates(delta_root: str) -> list[date_type]:
     from deltalake import DeltaTable
 
     try:
-        table_uri = str(Path(delta_root, "bronze", "opensky"))
+        table_uri = _build_table_uri(delta_root, "bronze", "opensky")
         dt = DeltaTable(table_uri, storage_options=get_storage_options())
         partitions = dt.partitions()
         # Cada partición: {ingestion_date: YYYY-MM-DD}
@@ -153,7 +153,7 @@ def _read_bronze_flights(
     """
     from deltalake import DeltaTable
 
-    table_uri = str(Path(delta_root, "bronze", "opensky"))
+    table_uri = _build_table_uri(delta_root, "bronze", "opensky")
     logger.info("Leyendo Bronze: %s", table_uri)
 
     dt = DeltaTable(table_uri, storage_options=get_storage_options())
@@ -223,7 +223,7 @@ def _read_bronze_weather(
     """
     from deltalake import DeltaTable
 
-    table_uri = str(Path(delta_root, "bronze", "weather_openmeteo"))
+    table_uri = _build_table_uri(delta_root, "bronze", "weather_openmeteo")
     logger.info("Leyendo Bronze weather: %s", table_uri)
 
     try:
