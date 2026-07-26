@@ -169,8 +169,6 @@ def main(argv: list[str] | None = None) -> int:
         target_dt = datetime(target_date.year, target_date.month, target_date.day)
         cursor = flights_col.find({"flight_date": target_dt})
         docs = list(cursor)
-        logger.info("--- Fecha %s: %d docs en Silver ---", target_date, len(docs))
-
         logger.info("--- Fecha %s: %d docs en Silver (flights) ---", target_date, len(docs))
 
         if args.dry_run:
