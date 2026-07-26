@@ -240,6 +240,15 @@ class BaseAdapter:
         """HTTP GET con los headers específicos de la fuente."""
         return http_get_with_retry(endpoint, headers=self._get_headers(), params=params)
 
+    def _http_post(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
+    ) -> Any:
+        """HTTP POST con los headers específicos de la fuente."""
+        return http_post_with_retry(endpoint, headers=self._get_headers(), params=params, data=data)
+
     def _get_headers(self) -> dict[str, str]:
         """Headers HTTP específicos de cada fuente (sobrescribir si necesario)."""
         return {}

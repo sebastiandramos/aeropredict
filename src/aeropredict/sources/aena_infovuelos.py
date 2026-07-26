@@ -14,7 +14,7 @@ from typing import Any
 
 import requests
 
-from .base import BaseAdapter, http_post_with_retry
+from .base import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -39,22 +39,25 @@ class AenaInfovuelosAdapter(BaseAdapter):
     def __init__(self, timeout: int = 30) -> None:
         super().__init__()
         self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
-                ),
-                "Accept": "application/json, text/plain, */*",
-                "Referer": AENA_INFOVUELOS_PAGE,
-            }
-        )
+
+    def _get_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": AENA_INFOVUELOS_PAGE,
+        }
 
     def warmup(self) -> None:
         """Load the Infovuelos page once for browser context cookies."""
         try:
-            response = self.session.get(AENA_INFOVUELOS_PAGE, timeout=self.timeout)
+            response = requests.get(
+                AENA_INFOVUELOS_PAGE,
+                headers=self._get_headers(),
+                timeout=self.timeout,
+            )
             response.raise_for_status()
         except requests.RequestException as exc:
             logger.warning("AENA warmup failed (non-fatal): %s", exc)
@@ -88,11 +91,9 @@ class AenaInfovuelosAdapter(BaseAdapter):
         if dos_dias:
             params["dosDias"] = "si"
 
-        data = http_post_with_retry(
+        data = self._http_post(
             AENA_FLIGHTS_ENDPOINT,
-            headers=dict(self.session.headers),
             params=params,
-            timeout=self.timeout,
         )
         if not isinstance(data, list):
             raise ValueError(f"Unexpected AENA response type: {type(data).__name__}")
