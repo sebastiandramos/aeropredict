@@ -14,6 +14,10 @@ Tablas entidad (raw desde MongoDB):
         Datos meteorológicos horarios por aeropuerto.
         Se sincroniza desde la colección ``weather`` de MongoDB.
 
+    ``aena_infovuelos``
+        Vuelos infovuelos de AENA por aeropuerto y snapshot.
+        Se sincroniza desde la colección ``aena_infovuelos`` de MongoDB.
+
 Tablas agregadas (desde flights):
     ``daily_airport_traffic``
         Vuelos por aeropuerto y día (arrivals / departures).
@@ -165,6 +169,42 @@ CREATE TABLE IF NOT EXISTS gold.feature_store (
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (icao24, flight_date)
 );
+
+CREATE TABLE IF NOT EXISTS gold.aena_infovuelos (
+    id                  SERIAL PRIMARY KEY,
+    snapshot_at_utc     TIMESTAMPTZ NOT NULL,
+    flight_number       VARCHAR(20),
+    aena_airport_iata   VARCHAR(4) NOT NULL,
+    flight_type         VARCHAR(20) NOT NULL,
+    source              VARCHAR(30),
+    query_airport_iata  VARCHAR(4),
+    query_flight_type   VARCHAR(20),
+    raw_flight_number   VARCHAR(20),
+    airline_iata        VARCHAR(4),
+    airline_icao        VARCHAR(4),
+    airline_name        VARCHAR(100),
+    icao24_airport      VARCHAR(10),
+    other_airport_iata  VARCHAR(4),
+    other_city          VARCHAR(100),
+    scheduled_date      VARCHAR(20),
+    scheduled_time      VARCHAR(20),
+    scheduled_local     VARCHAR(30),
+    estimated_date      VARCHAR(20),
+    estimated_time      VARCHAR(20),
+    estimated_local     VARCHAR(30),
+    status              VARCHAR(50),
+    terminal            VARCHAR(10),
+    gate_first          VARCHAR(20),
+    gate_second         VARCHAR(20),
+    checkin_from        VARCHAR(20),
+    checkin_to          VARCHAR(20),
+    aircraft_type       VARCHAR(50),
+    ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (snapshot_at_utc, flight_number, aena_airport_iata, flight_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_aena_infovuelos_airport_date
+    ON gold.aena_infovuelos (aena_airport_iata, snapshot_at_utc);
 """
 
 
@@ -173,7 +213,7 @@ def _get_conn():
     global _conn
     if _conn is None or _conn.closed:
         uri = get_postgres_uri()
-        logger.info("Conectando a PostgreSQL: %s", uri)
+        logger.debug("Conectando a PostgreSQL: %s", uri)
         _conn = psycopg2.connect(uri)
         _conn.autocommit = True
         with _conn.cursor() as cur:
@@ -514,9 +554,92 @@ def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
             template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s)",
             page_size=500,
         )
-        n = cur.rowcount
     conn.commit()
     logger.info("Gold weather: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+# ===================================================================
+# Gold — AENA Infovuelos (sync desde MongoDB)
+# ===================================================================
+
+
+def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
+    """Inserta documentos infovuelos de AENA en gold.aena_infovuelos.
+
+    Args:
+        docs: Lista de dicts normalizados desde MongoDB (colección aena_infovuelos).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not docs:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    for doc in docs:
+        rows.append((
+            doc.get("snapshot_at_utc"),
+            doc.get("flight_number"),
+            doc.get("aena_airport_iata"),
+            doc.get("flight_type"),
+            doc.get("source"),
+            doc.get("query_airport_iata"),
+            doc.get("query_flight_type"),
+            doc.get("raw_flight_number"),
+            doc.get("airline_iata"),
+            doc.get("airline_icao"),
+            doc.get("airline_name"),
+            doc.get("icao24_airport"),
+            doc.get("other_airport_iata"),
+            doc.get("other_city"),
+            doc.get("scheduled_date"),
+            doc.get("scheduled_time"),
+            doc.get("scheduled_local"),
+            doc.get("estimated_date"),
+            doc.get("estimated_time"),
+            doc.get("estimated_local"),
+            doc.get("status"),
+            doc.get("terminal"),
+            doc.get("gate_first"),
+            doc.get("gate_second"),
+            doc.get("checkin_from"),
+            doc.get("checkin_to"),
+            doc.get("aircraft_type"),
+        ))
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.aena_infovuelos
+            (snapshot_at_utc, flight_number, aena_airport_iata, flight_type,
+             source, query_airport_iata, query_flight_type, raw_flight_number,
+             airline_iata, airline_icao, airline_name, icao24_airport,
+             other_airport_iata, other_city,
+             scheduled_date, scheduled_time, scheduled_local,
+             estimated_date, estimated_time, estimated_local,
+             status, terminal, gate_first, gate_second,
+             checkin_from, checkin_to, aircraft_type)
+            VALUES %s
+            ON CONFLICT (snapshot_at_utc, flight_number, aena_airport_iata, flight_type)
+            DO NOTHING
+            """,
+            rows,
+            template=(
+                "(%s::timestamptz, %s, %s, %s,"
+                " %s, %s, %s, %s,"
+                " %s, %s, %s, %s,"
+                " %s, %s,"
+                " %s, %s, %s,"
+                " %s, %s, %s,"
+                " %s, %s, %s, %s,"
+                " %s, %s, %s)"
+            ),
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold AENA infovuelos: %d filas insertadas", len(rows))
     return len(rows)
 
 

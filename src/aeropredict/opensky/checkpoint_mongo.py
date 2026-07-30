@@ -28,7 +28,7 @@ def _connect() -> pymongo.database.Database[Any]:
     global _client
     if _client is None:
         uri = get_mongo_uri()
-        logger.info("Checkpoint MongoDB: conectando a %s", uri)
+        logger.debug("Checkpoint MongoDB: conectando a %s", uri)
         _client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)
         _client.admin.command("ping")
     return _client.get_database()

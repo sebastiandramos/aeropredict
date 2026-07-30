@@ -7,6 +7,7 @@ Colecciones:
   - ``flights``:          vuelos parseados (1 doc por vuelo)
   - ``state_vectors``:    snapshots de estado (1 doc por state vector)
   - ``track_waypoints``:  waypoints de trayectorias (1 doc por waypoint)
+  - ``aena_infovuelos``:  información de vuelos AENA (1 doc por consulta)
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ _indexes_ensure = False
 _schedule_indexes_ensure = False
 _aircraft_indexes_ensure = False
 _weather_indexes_ensure = False
+_aena_indexes_ensure = False
 
 
 def _connect() -> None:
@@ -37,7 +39,7 @@ def _connect() -> None:
     global _client
     if _client is None:
         uri = get_mongo_uri()
-        logger.info("Conectando a MongoDB: %s", uri)
+        logger.debug("Conectando a MongoDB: %s", uri)
         _client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)
         _client.admin.command("ping")
 
@@ -387,4 +389,54 @@ def write_weather(weather_list: list[dict[str, Any]]) -> int:
     except BulkWriteError as e:
         n = len(e.details.get("insertedIds", [])) if e.details else 0
     logger.info("Silver (MongoDB): %d weather docs insertados", n)
+    return n
+
+
+# ===================================================================
+# AENA INFOVUELOS
+# ===================================================================
+
+
+def _get_aena_collection() -> Collection[Any]:
+    """Devuelve colección ``aena_infovuelos`` con índices."""
+    global _aena_indexes_ensure
+    _connect()
+    assert _client is not None
+    db = _client.get_database()
+    if not _aena_indexes_ensure:
+        col = db["aena_infovuelos"]
+        col.create_index([
+            ("snapshot_at_utc", pymongo.ASCENDING),
+            ("flight_number", pymongo.ASCENDING),
+            ("aena_airport_iata", pymongo.ASCENDING),
+        ])
+        col.create_index([
+            ("aena_airport_iata", pymongo.ASCENDING),
+            ("snapshot_at_utc", pymongo.ASCENDING),
+        ])
+        _aena_indexes_ensure = True
+    return db["aena_infovuelos"]
+
+
+def write_aena_infovuelos(docs: list[dict[str, Any]]) -> int:
+    """Inserta información de vuelos AENA en MongoDB (colección ``aena_infovuelos``).
+
+    Args:
+        docs: Lista de dicts normalizados de AENA Infovuelos.
+
+    Returns:
+        Número de documentos insertados.
+    """
+    if not docs:
+        return 0
+    col = _get_aena_collection()
+    now = datetime.now(UTC)
+    for doc in docs:
+        doc.setdefault("ingested_at", now)
+    try:
+        result = col.insert_many(docs, ordered=False)
+        n = len(result.inserted_ids)
+    except BulkWriteError as e:
+        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    logger.info("Silver (MongoDB): %d AENA infovuelos insertados", n)
     return n

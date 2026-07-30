@@ -105,7 +105,7 @@ def write_raw_json(
     Cada fila contiene metadatos de la petición más la respuesta completa.
 
     Tabla: {delta_root}/bronze/{source_name}/
-    Particionado por: source
+    Sin particionado (compatible con tablas existentes en R2).
 
     Args:
         source_name: Identificador de la fuente (ej. ``schedules_aviationstack``).
@@ -141,21 +141,23 @@ def write_raw_json(
     opts = storage_options or get_storage_options()
 
     # 1. Escritura primaria (donde apunte delta_root)
-    write_deltalake(table_uri, table, partition_by=["source"], mode="append", storage_options=opts)
+    write_deltalake(table_uri, table, mode="append", storage_options=opts)
     logger.info("Bronze (%s): %s (%s) → %s", source_name, endpoint, params, table_uri)
 
     # 2. Dual-write
     if _is_cloud_uri(delta_root):
         # root es cloud → replicar a local
         local_uri = _build_table_uri(_LOCAL_ROOT, "bronze", source_name)
-        write_deltalake(local_uri, table, partition_by=["source"], mode="append")
+        write_deltalake(local_uri, table, mode="append")
         logger.info("Bronze dual local (%s): %s", source_name, local_uri)
     else:
         # root es local → replicar a cloud si hay credenciales
         cloud_root = _get_cloud_root()
         if cloud_root:
             cloud_uri = _build_table_uri(cloud_root, "bronze", source_name)
-            write_deltalake(cloud_uri, table, partition_by=["source"], mode="append", storage_options=opts)
+            write_deltalake(
+                cloud_uri, table, mode="append", storage_options=opts,
+            )
             logger.info("Bronze dual cloud (%s): %s", source_name, cloud_uri)
 
     return 1
@@ -202,7 +204,10 @@ def write_raw(
     opts = get_storage_options()
 
     # 1. Escritura primaria (donde apunte base_path)
-    write_deltalake(table_uri, table, partition_by=["ingestion_date"], mode="append", storage_options=opts)
+    write_deltalake(
+        table_uri, table, partition_by=["ingestion_date"],
+        mode="append", storage_options=opts,
+    )
     logger.info("Bronce: %s: %s (params=%s)", table_uri, endpoint, params)
 
     # 2. Dual-write
@@ -216,7 +221,11 @@ def write_raw(
         cloud_root = _get_cloud_root()
         if cloud_root:
             cloud_uri = _build_table_uri(cloud_root, "bronze", "opensky")
-            write_deltalake(cloud_uri, table, partition_by=["ingestion_date"], mode="append", storage_options=opts)
+            write_deltalake(
+                cloud_uri, table,
+                partition_by=["ingestion_date"],
+                mode="append", storage_options=opts,
+            )
             logger.info("Bronze dual cloud: %s", cloud_uri)
 
     return 1
@@ -421,7 +430,10 @@ EMPTY_CACHE_SCHEMA = pa.schema([
 ])
 
 
-def is_airport_empty(delta_root: str, airport_code: str, flight_date: datetime.date, endpoint: str) -> bool:
+def is_airport_empty(
+    delta_root: str, airport_code: str,
+    flight_date: datetime.date, endpoint: str,
+) -> bool:
     """Consulta si un (aeropuerto, fecha, endpoint) está cacheado como vacío.
 
     Args:
@@ -433,8 +445,9 @@ def is_airport_empty(delta_root: str, airport_code: str, flight_date: datetime.d
     Returns:
         ``True`` si está en cache (no llamar a la API).
     """
-    from deltalake import DeltaTable
     import pyarrow.compute as pc
+    from deltalake import DeltaTable
+
     from .config import get_storage_options
 
     table_uri = _build_table_uri(delta_root, "system", "empty_airport_cache")
@@ -455,7 +468,10 @@ def is_airport_empty(delta_root: str, airport_code: str, flight_date: datetime.d
     return pc.sum(mask).as_py() > 0
 
 
-def cache_empty_airport(delta_root: str, airport_code: str, flight_date: datetime.date, endpoint: str) -> None:
+def cache_empty_airport(
+    delta_root: str, airport_code: str,
+    flight_date: datetime.date, endpoint: str,
+) -> None:
     """Cachea que un (aeropuerto, fecha, endpoint) devolvió 0 vuelos.
 
     Args:
@@ -465,7 +481,9 @@ def cache_empty_airport(delta_root: str, airport_code: str, flight_date: datetim
         endpoint: ``arrivals`` o ``departures``.
     """
     from datetime import UTC, datetime
+
     from deltalake import write_deltalake
+
     from .config import get_storage_options
 
     table_uri = _build_table_uri(delta_root, "system", "empty_airport_cache")

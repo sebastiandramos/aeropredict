@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Script 1/3: OpenSky API → Bronze (Delta Lake).
+"""Script 1/5: OpenSky API → Bronze (Delta Lake).
 
 Extrae vuelos históricos de la API OpenSky y escribe el JSON crudo
 en la capa Bronze (Delta Lake), con dual-write a R2 + local.
@@ -20,15 +20,15 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 
+from aeropredict.opensky.checkpoint_mongo import (
+    get_checkpoint_dict,
+    save_checkpoint_dict_entry,
+)
 from aeropredict.opensky.client_pool import ClientPool
 from aeropredict.opensky.config import AEROPUERTOS, get_all_credentials, get_delta_root
 from aeropredict.opensky.credit_checker import can_extract
 from aeropredict.opensky.extract_flights import fetch_arrivals_raw, fetch_departures_raw
 from aeropredict.opensky.logging_config import setup_daily_logger
-from aeropredict.opensky.checkpoint_mongo import (
-    get_checkpoint_dict,
-    save_checkpoint_dict_entry,
-)
 from aeropredict.opensky.storage import (
     cache_empty_airport,
     is_airport_empty,
@@ -49,7 +49,7 @@ MIN_CREDITS = 0
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 1/3: Extrae vuelos OpenSky y escribe en Bronze (Delta Lake)",
+        description="Script 1/5: Extrae vuelos OpenSky y escribe en Bronze (Delta Lake)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
@@ -62,7 +62,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--start-date", type=str, default=None,
-        help="Fecha inicio para backfill (YYYY-MM-DD). Si se omite, usa la fecha más antigua en Bronze.",
+        help=(
+            "Fecha inicio para backfill (YYYY-MM-DD). "
+            "Si se omite, usa la fecha más antigua en Bronze."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -93,7 +96,10 @@ def _extract_day(
 
     for i, apt in enumerate(SPANISH_AIRPORT_CODES):
         if apt in already_extracted:
-            logger.info("  %s (%d/%d): ya extraído (checkpoint), saltando", apt, i + 1, len(SPANISH_AIRPORT_CODES))
+            logger.info(
+                "  %s (%d/%d): ya extraído (checkpoint), saltando",
+                apt, i + 1, len(SPANISH_AIRPORT_CODES),
+            )
             total_airports += 1
             airports_done.append(apt)
             continue
@@ -163,14 +169,14 @@ def _get_bronze_dates(delta_root: str) -> list[str]:
     except Exception:
         return []
     table = dt.to_pyarrow_table(columns=["ingestion_date"])
-    dates = sorted(set(str(d) for d in table.column("ingestion_date").to_pylist()))
+    dates = sorted({str(d) for d in table.column("ingestion_date").to_pylist()})
     return dates
 
 
 def _count_bronze_rows(delta_root: str, date_str: str) -> int:
     """Count rows in Bronze for a specific date."""
-    from deltalake import DeltaTable
     import pyarrow.compute as pc
+    from deltalake import DeltaTable
 
     table_uri = f"{delta_root}/bronze/opensky"
     try:
@@ -192,10 +198,13 @@ def main(argv: list[str] | None = None) -> int:
     delta_root = get_delta_root()
 
     logger.info("=" * 60)
-    logger.info("Script 1/3: Extract → Bronze")
+    logger.info("Script 1/5: Extract → Bronze")
     logger.info("Dry-run: %s | Days: %d | Delta root: %s", args.dry_run, args.days, delta_root)
     if args.backfill:
-        logger.info("Mode: BACKFill (re-extract incomplete dates + fill missing dates, ignore checkpoint)")
+        logger.info(
+            "Mode: BACKFill (re-extract incomplete dates "
+            "+ fill missing dates, ignore checkpoint)"
+        )
     logger.info("=" * 60)
 
     client: ClientPool | None = None
@@ -268,12 +277,19 @@ def main(argv: list[str] | None = None) -> int:
 
                 # If checkpoint says complete but too few rows → force all 32 airports
                 if len(missing) == 0 and row_count < 1000:
-                    logger.info("  %s: %d rows pero checkpoint dice completo — forzando re-extracción",
-                                date_str, row_count)
+                    logger.info(
+                        "  %s: %d rows pero checkpoint dice completo"
+                        " — forzando re-extracción",
+                        date_str, row_count,
+                    )
                     missing = set(SPANISH_AIRPORT_CODES)
                 else:
-                    logger.info("  %s: %d rows, checkpoint=%d/%d airports, faltan=%d — REEXTRAER",
-                                date_str, row_count, len(cp_airports), len(SPANISH_AIRPORT_CODES), len(missing))
+                    logger.info(
+                        "  %s: %d rows, checkpoint=%d/%d airports,"
+                        " faltan=%d — REEXTRAER",
+                        date_str, row_count, len(cp_airports),
+                        len(SPANISH_AIRPORT_CODES), len(missing),
+                    )
 
             if args.dry_run:
                 logger.info("  DRY RUN: extraería %d aeropuertos para %s", len(missing), date_str)
@@ -287,7 +303,11 @@ def main(argv: list[str] | None = None) -> int:
             all_errors.extend(result["errors"])
 
             if result["airports_done"]:
-                save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
+                save_checkpoint_dict_entry(
+                    CHECKPOINT_COLLECTION,
+                    result["date"],
+                    result["airports_done"],
+                )
     else:
         # Normal mode: extract last N days
         for offset in range(1, args.days + 1):
@@ -309,7 +329,11 @@ def main(argv: list[str] | None = None) -> int:
             all_errors.extend(result["errors"])
 
             if result["airports_done"]:
-                save_checkpoint_dict_entry(CHECKPOINT_COLLECTION, result["date"], result["airports_done"])
+                save_checkpoint_dict_entry(
+                    CHECKPOINT_COLLECTION,
+                    result["date"],
+                    result["airports_done"],
+                )
 
     elapsed = time.time() - start
 
