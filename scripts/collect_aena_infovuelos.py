@@ -20,6 +20,7 @@ from typing import Any
 from aeropredict.opensky.config import get_delta_root
 from aeropredict.opensky.storage import write_raw_json
 from aeropredict.sources.aena_infovuelos import (
+    AENA_FLIGHTS_ENDPOINT,
     FLIGHT_TYPE_LABELS,
     AenaInfovuelosAdapter,
 )
@@ -126,15 +127,22 @@ def collect(
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter = AenaInfovuelosAdapter()
-    if warmup:
-        adapter.warmup()
 
     if dry_run:
         for airport in [a.upper() for a in airports]:
             for flight_type in flight_types:
                 label = FLIGHT_TYPE_LABELS.get(flight_type, flight_type)
                 logger.info("  [dry-run] Would fetch AENA %s %s", airport, label)
-        return {"csv_path": None, "json_path": None, "rows": 0, "errors": 0}
+        return {
+            "csv_path": None,
+            "json_path": None,
+            "rows": 0,
+            "errors": 0,
+            "total_batches": len(airports) * len(flight_types),
+        }
+
+    if warmup:
+        adapter.warmup()
 
     snapshot_at = datetime.now(UTC).replace(microsecond=0)
     stamp = snapshot_at.strftime("%Y%m%dT%H%M%SZ")
@@ -201,7 +209,7 @@ def collect(
     for batch in raw_batches:
         write_raw_json(
             "aena_infovuelos",
-            "/sites/Satellite",
+            AENA_FLIGHTS_ENDPOINT,
             {"airport": batch["airport"], "flightType": batch["flight_type"]},
             batch["flights"],
             delta_root,
@@ -212,6 +220,7 @@ def collect(
         "json_path": str(json_path) if json_path else None,
         "rows": len(rows),
         "errors": len(errors),
+        "total_batches": len(airports) * len(flight_types),
     }
 
 
@@ -242,7 +251,14 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("CSV: %s", result["csv_path"])
         if result["json_path"]:
             logger.info("JSON: %s", result["json_path"])
-    return 1 if result["errors"] else 0
+    failed = result["errors"]
+    total = result["total_batches"]
+    if failed and failed >= total:
+        logger.error("All %d batches failed — collector run failed", total)
+        return 1
+    if failed:
+        logger.warning("Partial failure: %d/%d batches failed — run continues", failed, total)
+    return 0
 
 
 if __name__ == "__main__":
