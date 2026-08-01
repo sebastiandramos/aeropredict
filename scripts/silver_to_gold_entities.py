@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Script 4/5: Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
 
-Copies the ``flights``, ``aircraft`` and ``weather`` collections from
-MongoDB into ``gold.flights``, ``gold.aircraft`` and ``gold.weather``
-in PostgreSQL.
+Copies the ``flights``, ``aircraft``, ``weather`` and ``aena_infovuelos``
+collections from MongoDB into ``gold.flights``, ``gold.aircraft``,
+``gold.weather`` and ``gold.aena_infovuelos`` in PostgreSQL.
 
 Usage:
     python scripts/silver_to_gold_entities.py [--dry-run]
@@ -20,12 +20,16 @@ from pymongo import MongoClient
 
 from aeropredict.opensky.checkpoint_mongo import (
     add_to_checkpoint_set,
+    clear_checkpoints,
+    get_checkpoint_value,
+    set_checkpoint_value,
 )
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import (
     _get_conn as get_gold_conn,
 )
 from aeropredict.opensky.storage_gold import (
+    write_aena_infovuelos_gold,
     write_aircraft_gold,
     write_flights_gold_raw,
     write_weather_gold,
@@ -85,6 +89,38 @@ WEATHER_FIELDS = {
     "_id": 0,
 }
 
+# Campos relevantes de aena_infovuelos en MongoDB
+AENA_FIELDS = {
+    "snapshot_at_utc": 1,
+    "flight_number": 1,
+    "aena_airport_iata": 1,
+    "flight_type": 1,
+    "source": 1,
+    "query_airport_iata": 1,
+    "query_flight_type": 1,
+    "raw_flight_number": 1,
+    "airline_iata": 1,
+    "airline_icao": 1,
+    "airline_name": 1,
+    "icao24_airport": 1,
+    "other_airport_iata": 1,
+    "other_city": 1,
+    "scheduled_date": 1,
+    "scheduled_time": 1,
+    "scheduled_local": 1,
+    "estimated_date": 1,
+    "estimated_time": 1,
+    "estimated_local": 1,
+    "status": 1,
+    "terminal": 1,
+    "gate_first": 1,
+    "gate_second": 1,
+    "checkin_from": 1,
+    "checkin_to": 1,
+    "aircraft_type": 1,
+    "_id": 1,
+}
+
 
 def _stats() -> dict[str, int]:
     """Cuenta documentos en MongoDB y PostgreSQL."""
@@ -94,7 +130,7 @@ def _stats() -> dict[str, int]:
 
     stats: dict[str, int] = {}
 
-    for col in ("flights", "aircraft", "weather"):
+    for col in ("flights", "aircraft", "weather", "aena_infovuelos"):
         stats[f"mongo_{col}"] = mdb[col].count_documents({})
         with pg.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM gold.{col}")
@@ -127,6 +163,54 @@ def _sync_entity(
     return 0
 
 
+def _sync_entity_incremental(
+    mdb: Any,
+    collection: str,
+    fields: dict[str, int],
+    write_fn: Any,
+    cursor_key: str,
+    page_size: int = 2000,
+) -> int:
+    """Sync incremental de una entidad vía cursor ObjectId (_id).
+
+    Sin cursor guardado → sync completo (todas las docs de una vez) y se
+    persiste el cursor en el _id de la última doc. Con cursor → páginas
+    ascendentes de ``_id > cursor`` (el cursor se persiste tras cada
+    página escrita). Si una página falla, el cursor queda en la última
+    página committeada y la siguiente ejecución la reprocesa; el
+    ``ON CONFLICT DO NOTHING`` de las write_fn hace el reproceso
+    idempotente. Devuelve el total de filas escritas.
+    """
+    cursor = get_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key)
+    total = 0
+
+    if cursor is None:
+        docs = list(mdb[collection].find({}, fields))
+        logger.info("  %s: %d documentos (sync completo)", collection, len(docs))
+        if docs:
+            total += write_fn(docs)
+            set_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key, docs[-1]["_id"])
+        return total
+
+    logger.info("  %s: sync incremental desde cursor %s", collection, cursor)
+    while True:
+        docs = list(
+            mdb[collection]
+            .find({"_id": {"$gt": cursor}}, fields)
+            .sort("_id", 1)
+            .limit(page_size)
+        )
+        if not docs:
+            break
+        n = write_fn(docs)
+        total += n
+        cursor = docs[-1]["_id"]
+        set_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key, cursor)
+        logger.info("  Gold %s: %d escritos (cursor %s)", cursor_key, n, cursor)
+
+    return total
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sync entity tables: MongoDB → Gold (PostgreSQL)",
@@ -142,7 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info("=" * 60)
-    logger.info("Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather)")
+    logger.info(
+        "Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather, aena_infovuelos)"
+    )
     logger.info("=" * 60)
 
     # -- Conexión --
@@ -165,16 +251,29 @@ def main(argv: list[str] | None = None) -> int:
             "  weather:  MongoDB=%d  Gold=%d",
             stats["mongo_weather"], stats["gold_weather"],
         )
+        logger.info(
+            "  aena:     MongoDB=%d  Gold=%d",
+            stats["mongo_aena_infovuelos"], stats["gold_aena_infovuelos"],
+        )
 
         pending_flights = stats["mongo_flights"] - stats["gold_flights"]
         pending_aircraft = stats["mongo_aircraft"] - stats["gold_aircraft"]
         pending_weather = stats["mongo_weather"] - stats["gold_weather"]
+        pending_aena = stats["mongo_aena_infovuelos"] - stats["gold_aena_infovuelos"]
 
-        if pending_flights <= 0 and pending_aircraft <= 0 and pending_weather <= 0:
+        all_pending = (
+            pending_flights <= 0
+            and pending_aircraft <= 0
+            and pending_weather <= 0
+            and pending_aena <= 0
+        )
+        if all_pending:
             logger.info("Sin entidades pendientes. Todo al día.")
         else:
-            logger.info("Pendientes de sincronizar: %d flights, %d aircraft, %d weather",
-                        pending_flights, pending_aircraft, pending_weather)
+            logger.info(
+                "Pendientes de sincronizar: %d flights, %d aircraft, %d weather, %d aena",
+                pending_flights, pending_aircraft, pending_weather, pending_aena,
+            )
 
         logger.info("=" * 60)
         logger.info("DRY RUN: no se insertó nada")
@@ -182,10 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         mongo.close()
         return 0
 
-    # Limpiar checkpoints si --force
+    # Limpiar checkpoints si --force (mismo path prefijado `checkpoints_`
+    # que usan los helpers; antes borraba la colección sin prefijo, no-op).
     if args.force:
         logger.info("Force mode: eliminando checkpoints previos...")
-        mdb[CHECKPOINT_COLLECTION].delete_many({})
+        clear_checkpoints(CHECKPOINT_COLLECTION)
 
     # -- Sync entities --
     logger.info("Sincronizando entidades...")
@@ -193,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     _sync_entity(mdb, "flights", FLIGHTS_FIELDS, write_flights_gold_raw, "flights")
     _sync_entity(mdb, "aircraft", AIRCRAFT_FIELDS, write_aircraft_gold, "aircraft")
     _sync_entity(mdb, "weather", WEATHER_FIELDS, write_weather_gold, "weather")
+    _sync_entity_incremental(
+        mdb,
+        "aena_infovuelos",
+        AENA_FIELDS,
+        write_aena_infovuelos_gold,
+        "aena_infovuelos_cursor",
+    )
 
     mongo.close()
 
@@ -203,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("  flights:  MongoDB=%d  Gold=%d", stats["mongo_flights"], stats["gold_flights"])
     logger.info("  aircraft: MongoDB=%d  Gold=%d", stats["mongo_aircraft"], stats["gold_aircraft"])
     logger.info("  weather:  MongoDB=%d  Gold=%d", stats["mongo_weather"], stats["gold_weather"])
+    logger.info(
+        "  aena:     MongoDB=%d  Gold=%d",
+        stats["mongo_aena_infovuelos"], stats["gold_aena_infovuelos"],
+    )
     logger.info("=" * 60)
 
     return 0
