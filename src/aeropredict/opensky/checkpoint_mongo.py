@@ -92,3 +92,33 @@ def add_to_checkpoint_set(collection_name: str, value: str) -> None:
         upsert=True,
     )
     logger.info("Checkpoint [%s] actualizado: añadido %s", collection_name, value)
+
+
+# ── Par clave → valor genérico ─────────────────────────────────────
+# Documento: {_id: key, value: value}. El value puede ser cualquier
+# tipo BSON (p.ej. un ObjectId de cursor), sin stringificar.
+
+def get_checkpoint_value(collection_name: str, key: str) -> Any:
+    """Lee un valor de checkpoint genérico, o None si no existe."""
+    col = _collection(collection_name)
+    doc = col.find_one({"_id": key})
+    if doc is None:
+        return None
+    return doc.get("value")
+
+
+def set_checkpoint_value(collection_name: str, key: str, value: Any) -> None:
+    """Guarda/actualiza un valor de checkpoint genérico (upsert)."""
+    col = _collection(collection_name)
+    col.replace_one(
+        {"_id": key},
+        {"_id": key, "value": value},
+        upsert=True,
+    )
+    logger.info("Checkpoint [%s] actualizado: %s", collection_name, key)
+
+
+def clear_checkpoints(collection_name: str) -> None:
+    """Elimina todos los checkpoints de una colección (reset)."""
+    col = _collection(collection_name)
+    col.delete_many({})
