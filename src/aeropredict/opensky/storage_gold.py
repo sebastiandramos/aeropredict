@@ -577,11 +577,17 @@ def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
         return 0
 
     rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
     for doc in docs:
+        flight_number = _trunc(doc.get("flight_number"), 20)
+        aena_airport_iata = _trunc(doc.get("aena_airport_iata"), 4)
+        if not flight_number or not aena_airport_iata:
+            n_skipped += 1
+            continue
         rows.append((
             doc.get("snapshot_at_utc"),
-            doc.get("flight_number"),
-            doc.get("aena_airport_iata"),
+            flight_number,
+            aena_airport_iata,
             doc.get("flight_type"),
             doc.get("source"),
             doc.get("query_airport_iata"),
@@ -607,6 +613,12 @@ def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
             doc.get("checkin_to"),
             doc.get("aircraft_type"),
         ))
+
+    if n_skipped:
+        logger.warning(
+            "Skipped %d AENA rows missing flight_number or aena_airport_iata",
+            n_skipped,
+        )
 
     conn = _get_conn()
     with conn.cursor() as cur:
