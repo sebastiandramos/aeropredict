@@ -20,6 +20,9 @@ from pymongo import MongoClient
 
 from aeropredict.opensky.checkpoint_mongo import (
     add_to_checkpoint_set,
+    clear_checkpoints,
+    get_checkpoint_value,
+    set_checkpoint_value,
 )
 from aeropredict.opensky.config import get_mongo_uri
 from aeropredict.opensky.storage_gold import (
@@ -115,7 +118,7 @@ AENA_FIELDS = {
     "checkin_from": 1,
     "checkin_to": 1,
     "aircraft_type": 1,
-    "_id": 0,
+    "_id": 1,
 }
 
 
@@ -160,6 +163,54 @@ def _sync_entity(
     return 0
 
 
+def _sync_entity_incremental(
+    mdb: Any,
+    collection: str,
+    fields: dict[str, int],
+    write_fn: Any,
+    cursor_key: str,
+    page_size: int = 2000,
+) -> int:
+    """Sync incremental de una entidad vía cursor ObjectId (_id).
+
+    Sin cursor guardado → sync completo (todas las docs de una vez) y se
+    persiste el cursor en el _id de la última doc. Con cursor → páginas
+    ascendentes de ``_id > cursor`` (el cursor se persiste tras cada
+    página escrita). Si una página falla, el cursor queda en la última
+    página committeada y la siguiente ejecución la reprocesa; el
+    ``ON CONFLICT DO NOTHING`` de las write_fn hace el reproceso
+    idempotente. Devuelve el total de filas escritas.
+    """
+    cursor = get_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key)
+    total = 0
+
+    if cursor is None:
+        docs = list(mdb[collection].find({}, fields))
+        logger.info("  %s: %d documentos (sync completo)", collection, len(docs))
+        if docs:
+            total += write_fn(docs)
+            set_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key, docs[-1]["_id"])
+        return total
+
+    logger.info("  %s: sync incremental desde cursor %s", collection, cursor)
+    while True:
+        docs = list(
+            mdb[collection]
+            .find({"_id": {"$gt": cursor}}, fields)
+            .sort("_id", 1)
+            .limit(page_size)
+        )
+        if not docs:
+            break
+        n = write_fn(docs)
+        total += n
+        cursor = docs[-1]["_id"]
+        set_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key, cursor)
+        logger.info("  Gold %s: %d escritos (cursor %s)", cursor_key, n, cursor)
+
+    return total
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sync entity tables: MongoDB → Gold (PostgreSQL)",
@@ -175,7 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info("=" * 60)
-    logger.info("Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather)")
+    logger.info(
+        "Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather, aena_infovuelos)"
+    )
     logger.info("=" * 60)
 
     # -- Conexión --
@@ -228,10 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         mongo.close()
         return 0
 
-    # Limpiar checkpoints si --force
+    # Limpiar checkpoints si --force (mismo path prefijado `checkpoints_`
+    # que usan los helpers; antes borraba la colección sin prefijo, no-op).
     if args.force:
         logger.info("Force mode: eliminando checkpoints previos...")
-        mdb[CHECKPOINT_COLLECTION].delete_many({})
+        clear_checkpoints(CHECKPOINT_COLLECTION)
 
     # -- Sync entities --
     logger.info("Sincronizando entidades...")
@@ -239,7 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     _sync_entity(mdb, "flights", FLIGHTS_FIELDS, write_flights_gold_raw, "flights")
     _sync_entity(mdb, "aircraft", AIRCRAFT_FIELDS, write_aircraft_gold, "aircraft")
     _sync_entity(mdb, "weather", WEATHER_FIELDS, write_weather_gold, "weather")
-    _sync_entity(mdb, "aena_infovuelos", AENA_FIELDS, write_aena_infovuelos_gold, "aena_infovuelos")
+    _sync_entity_incremental(
+        mdb,
+        "aena_infovuelos",
+        AENA_FIELDS,
+        write_aena_infovuelos_gold,
+        "aena_infovuelos_cursor",
+    )
 
     mongo.close()
 
