@@ -22,6 +22,16 @@ MAX_RETRIES = 3
 BACKOFF_BASE = 1.0  # segundos
 
 
+class NonJSONResponseError(ValueError):
+    """A 2xx response body that is not valid JSON.
+
+    Intentionally NOT retried: a 200-with-non-JSON body is almost always an
+    anti-bot challenge or gateway page; retrying burns the retry budget and
+    hits the same response. Transient failures are covered by the retries on
+    429/5xx/timeouts in http_get_with_retry / http_post_with_retry.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Utility: parse JSON response safely
 # ---------------------------------------------------------------------------
@@ -34,7 +44,7 @@ def _parse_json_response(resp: requests.Response, url: str) -> Any:
     try:
         return resp.json()
     except ValueError as exc:
-        raise ValueError(
+        raise NonJSONResponseError(
             f"Non-JSON response from {url} "
             f"(status={resp.status_code}, "
             f"content-type={resp.headers.get('content-type', '?')}): "
@@ -82,6 +92,7 @@ def http_get_with_retry(
                 continue
             resp.raise_for_status()
             return _parse_json_response(resp, url)
+            # Non-JSON bodies raise NonJSONResponseError — NOT retried (see class docstring).
         except requests.Timeout:
             logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
             if attempt < MAX_RETRIES:
@@ -155,6 +166,7 @@ def http_post_with_retry(
                 continue
             resp.raise_for_status()
             return _parse_json_response(resp, url)
+            # Non-JSON bodies raise NonJSONResponseError — NOT retried (see class docstring).
         except requests.Timeout:
             logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
             if attempt < MAX_RETRIES:
