@@ -1,9 +1,18 @@
 """AENA Infovuelos adapter.
 
-This adapter uses the same public JSON endpoint loaded by
-https://www.aena.es/es/infovuelos.html. The service exposes a short window
-around the query time, so it is useful for periodic snapshots, not historical
-bulk downloads.
+This adapter uses the same public JSON endpoint that the AENA website loads
+from https://www.aena.es/es/infovuelos.html.
+
+Key behavior:
+- Requests are made via POST to a Satellite endpoint used by the public site.
+- The API returns a limited time window of flights, not full historical data.
+- The `dosDias=si` parameter asks for the site’s two-day window around the
+  current query time.
+- The adapter keeps a browser-like session context with a Referer header so
+  the endpoint sees the request as coming from the Infovuelos page.
+
+This module is intended for periodic snapshots such as hourly polling, and
+not for bulk historical ingestion.
 """
 
 from __future__ import annotations
@@ -12,6 +21,9 @@ from datetime import datetime
 from typing import Any
 
 import requests
+
+from aeropredict.sources.base import BaseAdapter
+
 
 AENA_BASE_URL = "https://www.aena.es"
 AENA_INFOVUELOS_PAGE = f"{AENA_BASE_URL}/es/infovuelos.html"
@@ -30,10 +42,25 @@ FLIGHT_TYPE_LABELS = {
 }
 
 
-class AenaInfovuelosAdapter:
-    """Client for AENA's Infovuelos JSON endpoint."""
+class AenaInfovuelosAdapter(BaseAdapter):
+    """Client for AENA's Infovuelos JSON endpoint.
 
-    def __init__(self, timeout: int = 30) -> None:
+    The AENA Infovuelos service is not a standard REST API; it is the same
+    backend used by AENA's public flight status page.
+
+    This adapter:
+    - maintains a session with browser-like headers and Referer,
+    - optionally delegates retries through `BaseAdapter`/`Pool`,
+    - falls back to a simple retry/backoff loop for POST requests,
+    - and raises explicit errors when AENA returns non-JSON responses.
+
+    Args:
+        pool: Optional credential pool for sources that support it.
+        timeout: Request timeout in seconds.
+    """
+
+    def __init__(self, pool: Any | None = None, timeout: int = 30) -> None:
+        super().__init__(pool=pool)
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(
@@ -72,7 +99,6 @@ class AenaInfovuelosAdapter:
         if flight_type_code is None:
             allowed = ", ".join(sorted(FLIGHT_TYPES))
             raise ValueError(f"Invalid flight_type={flight_type!r}. Expected one of: {allowed}")
-
         params: dict[str, str] = {
             "pagename": "AENA_ConsultarVuelos",
             "airport": airport_iata.upper(),
@@ -81,14 +107,55 @@ class AenaInfovuelosAdapter:
         if dos_dias:
             params["dosDias"] = "si"
 
-        response = self.session.post(
-            AENA_FLIGHTS_ENDPOINT,
-            params=params,
-            timeout=self.timeout,
-            allow_redirects=True,
-        )
-        response.raise_for_status()
-        data = response.json()
+        # The AENA endpoint returns a short time window of flights around the
+        # current query point. This is useful for snapshot polling, but it is
+        # not a bulk historical endpoint.
+
+        # Use a POST with simple retry/backoff. If a Pool is configured, prefer
+        # using pool.execute to allow credential rotation; fallback to local loop.
+        def _do_post() -> requests.Response:
+            return self.session.post(
+                AENA_FLIGHTS_ENDPOINT,
+                params=params,
+                timeout=self.timeout,
+                allow_redirects=True,
+            )
+
+        # Execute with pool if available (pool.execute expects a callable).
+        if getattr(self, "pool", None) is not None:
+            response = self.pool.execute(lambda: _do_post(), context=AENA_FLIGHTS_ENDPOINT)
+        else:
+            # Basic retry/backoff loop (mirrors BaseAdapter behavior for GET).
+            last_exc: Exception | None = None
+            for attempt in range(1, 4):
+                try:
+                    response = _do_post()
+                    if response.status_code == 429:
+                        # Respect Retry-After if present
+                        retry_after = response.headers.get("Retry-After")
+                        try:
+                            wait = float(retry_after) if retry_after else 1.0 * (2 ** (attempt - 1))
+                        except Exception:
+                            wait = 1.0 * (2 ** (attempt - 1))
+                        time.sleep(wait)
+                        continue
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as exc:
+                    last_exc = exc
+                    if attempt < 4:
+                        time.sleep(1.0 * (2 ** (attempt - 1)))
+                    else:
+                        raise
+
+        # Safe JSON parse with context for non-JSON 200 responses
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ValueError(
+                f"Non-JSON response from AENA for {airport_iata}: content-type={response.headers.get('content-type', '?')}"
+            ) from exc
+
         if not isinstance(data, list):
             raise ValueError(f"Unexpected AENA response type: {type(data).__name__}")
         return data

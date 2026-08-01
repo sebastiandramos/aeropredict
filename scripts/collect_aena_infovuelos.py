@@ -93,7 +93,13 @@ def expand_types(values: list[str]) -> list[str]:
             codes.append("L")
         else:
             codes.append(value)
-    return list(dict.fromkeys(codes))
+    result = list(dict.fromkeys(codes))
+    # Validate final codes early so users get a clear error at parse time.
+    allowed = {"S", "L"}
+    invalid = [c for c in result if c not in allowed]
+    if invalid:
+        raise ValueError(f"Invalid flight type codes: {invalid}. Use 'S' (departures) or 'L' (arrivals).")
+    return result
 
 
 def collect(
@@ -127,16 +133,15 @@ def collect(
 
             label = FLIGHT_TYPE_LABELS.get(flight_type, flight_type)
             logger.info("Fetching AENA %s %s", airport, label)
+            # Count the attempt up-front so we always respect sleep between attempts
+            # even when the request fails.
+            requests_made += 1
             try:
                 raw_flights = adapter.get_flights(airport, flight_type)
             except Exception as exc:
                 logger.warning("AENA error %s %s: %s", airport, label, exc)
-                errors.append(
-                    {"airport": airport, "flight_type": label, "error": str(exc)}
-                )
+                errors.append({"airport": airport, "flight_type": label, "error": str(exc)})
                 continue
-
-            requests_made += 1
             if limit is not None:
                 raw_flights = raw_flights[:limit]
 
@@ -182,9 +187,15 @@ def collect(
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     args = parse_args(argv)
+    try:
+        flight_types = expand_types(args.types)
+    except ValueError as exc:
+        logger.error("Invalid --types: %s", exc)
+        return 2
+
     result = collect(
         airports=args.airports,
-        flight_types=expand_types(args.types),
+        flight_types=flight_types,
         output_dir=Path(args.output_dir),
         limit=args.limit,
         sleep_seconds=args.sleep,
