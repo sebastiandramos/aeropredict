@@ -21,13 +21,11 @@ IATA_TO_ICAO: dict[str, str] = {
     "EAS": "LESO",
     "GRO": "LEGE",
     "GRX": "LEGR",
-    "IBZ": "LEIB",
     "LCG": "LECO",
     "LEN": "LELN",
     "MAD": "LEMD",
     "OVD": "LEAS",
     "OZP": "LEMO",
-    "PMI": "LEPA",
     "SDR": "LEXJ",
     "SVQ": "LEZL",
     "VGO": "LEVX",
@@ -42,7 +40,9 @@ IATA_TO_ICAO: dict[str, str] = {
     "TFS": "GCTS",
     "VDE": "GCHI",
     # --- España (Baleares) ---
+    "IBZ": "LEIB",
     "MAH": "LEMH",
+    "PMI": "LEPA",
     # --- Portugal ---
     "FAO": "LPFR",
     "LIS": "LPPT",

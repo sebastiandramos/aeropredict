@@ -43,8 +43,8 @@ _REGION_PREFIXES: list[tuple[str, str]] = [
 
 def _classify_region(icao: str) -> str:
     """Classify an ICAO code into a region string."""
-    # Baleares special case: LEMH
-    if icao == "LEMH":
+    # Baleares special case: LEMH (MAH), LEIB (IBZ), LEPA (PMI)
+    if icao in {"LEMH", "LEIB", "LEPA"}:
         return "España (Baleares)"
     for prefix, region in _REGION_PREFIXES:
         if icao.startswith(prefix):
