@@ -7,11 +7,13 @@ TFM — Predicción de retrasos de vuelos.
 ### Flujo completo (producción)
 
 ```
-GitHub Actions (cron 07:00 / 20:00 UTC)
+GitHub Actions (cron 06:30 / 19:30 UTC; AENA: cron horario minuto 7 UTC)
   ↓
-extract_to_bronze.py → Bronze (R2)
+extract_opensky_to_bronze.py → Bronze (R2)
+collect_weather.py           → Bronze (R2) — Open-Meteo weather
+collect_aena_infovuelos.py   → Bronze (R2) — AENA infovuelos (horario)
   ↓
-bronze_to_silver.py → Silver (MongoDB Atlas)
+bronze_to_silver.py → Silver (MongoDB Atlas) — flights + weather + aena_infovuelos
   ↓
 silver_to_gold.py          → Gold (PostgreSQL — Neon) — agregaciones de vuelos
 silver_to_gold_entities.py → Gold (PostgreSQL — Neon) — tablas entidad raw
@@ -61,7 +63,7 @@ Parámetros:
 
 #### 2. Bronze → Silver (MongoDB)
 
-Lee los datos de Bronze y los inserta en MongoDB (colección `flights`).
+Lee los datos de Bronze y los inserta en MongoDB (colecciones `flights`, `weather` y `aena_infovuelos`; esta última se promueve por horas, con checkpoint independiente).
 
 ```bash
 # Fecha concreta
@@ -86,7 +88,7 @@ python scripts/bronze_to_silver.py --date 2025-01-15 --dry-run
 
 #### 3. Silver → Gold entidades (PostgreSQL)
 
-Lee las 3 colecciones de MongoDB y las escribe en tablas Gold en PostgreSQL.
+Lee las 4 colecciones de MongoDB y las escribe en tablas Gold en PostgreSQL.
 
 ```bash
 # Sincronizar todo
@@ -103,6 +105,7 @@ python scripts/silver_to_gold_entities.py --dry-run
 | `flights` | `gold.flights` | Raw (tabular) | `SERIAL` + índices |
 | `aircraft` | `gold.aircraft` | Maestra | `icao24` |
 | `weather` | `gold.weather` | Horaria | `SERIAL` + índice `(airport_code, flight_date)` |
+| `aena_infovuelos` | `gold.aena_infovuelos` | Horaria | `SERIAL` + UNIQUE `(snapshot_at_utc, flight_number, aena_airport_iata, flight_type)` |
 
 ### Pipeline completo mock (un solo comando)
 

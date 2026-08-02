@@ -1,0 +1,51 @@
+name: AENA Infovuelos Hourly Collector
+
+on:
+  schedule:
+    - cron: "7 * * * *"  # hourly, minute 7 UTC
+  workflow_dispatch:
+    inputs:
+      airports:
+        description: "Space-separated AENA airport IATA codes"
+        required: false
+        default: "BCN MAD"
+      flight_types:
+        description: "departures, arrivals, or both"
+        required: false
+        default: "both"
+
+concurrency:
+  group: aena-infovuelos-hourly
+  cancel-in-progress: false
+
+env:
+  AENA_AIRPORTS: ${{ github.event.inputs.airports || 'BCN MAD' }}
+  AENA_FLIGHT_TYPES: ${{ github.event.inputs.flight_types || 'both' }}
+  OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
+
+jobs:
+  collect:
+    name: Collect AENA Infovuelos snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+      - uses: dopplerhq/cli-action@v3
+
+      - name: Collect Infovuelos CSV/JSON + Bronze
+        run: |
+          doppler run -- python scripts/collect_aena_infovuelos.py \
+            --airports $AENA_AIRPORTS \
+            --types $AENA_FLIGHT_TYPES \
+            --output-dir data/raw/aena_infovuelos
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
