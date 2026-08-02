@@ -126,18 +126,44 @@ def _monkeypatch_deltatable(
     monkeypatch: pytest.MonkeyPatch,
     table: pa.Table,
 ) -> None:
-    """Replace ``deltalake.DeltaTable`` with a mock returning *table*."""
+    """Replace ``deltalake.DeltaTable`` with a mock.
+
+    *table* is returned for ``bronze/opensky`` reads; schema-correct **empty**
+    tables are returned for ``bronze/weather_openmeteo`` and
+    ``bronze/aena_infovuelos``, which ``main()`` also reads (they have
+    ``fetched_at`` instead of ``ingestion_date``).
+    """
+
+    def _empty_table(*fields: pa.Field) -> pa.Table:
+        return pa.table({f.name: pa.array([], type=f.type) for f in fields})
+
+    weather_table = _empty_table(
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("response", pa.string()),
+    )
+    aena_table = _empty_table(
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("params", pa.string()),
+        pa.field("response", pa.string()),
+    )
 
     class MockDeltaTable:
         def __init__(self, table_uri: str, storage_options: Any = None) -> None:
-            pass
+            if "weather_openmeteo" in table_uri:
+                self._table = weather_table
+            elif "aena_infovuelos" in table_uri:
+                self._table = aena_table
+            else:
+                self._table = table
 
         def to_pyarrow_table(self) -> pa.Table:
-            return table
+            return self._table
 
         def partitions(self) -> list[dict[str, str]]:
-            # Build unique ingestion_date values from the table
-            date_col = table.column("ingestion_date")
+            # weather/AENA tables are not partitioned by ingestion_date
+            if "ingestion_date" not in self._table.column_names:
+                return []
+            date_col = self._table.column("ingestion_date")
             unique_dates = sorted(
                 {str(d.as_py()) for d in date_col if d.as_py() is not None}
             )
@@ -720,6 +746,13 @@ class TestCheckpoint:
             bronze_to_silver,
             "write_flights_silver",
             mock_write,
+        )
+        # main() checkpoints the date even when no flights were written
+        # (weather/AENA paths run independently) — mock the Mongo write.
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "add_to_checkpoint_set",
+            MagicMock(),
         )
         monkeypatch.setattr(bronze_to_silver, "close_silver", MagicMock())
 

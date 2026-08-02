@@ -1,4 +1,4 @@
-"""Tests for ``scripts/extract_to_bronze.py`` — Bronze layer extraction.
+"""Tests for ``scripts/extract_opensky_to_bronze.py`` — Bronze layer extraction.
 
 Covers: API call orchestration, checkpoint logic, Delta Lake writes,
 idempotency, and rate-limit handling.  Mock OpenSky API at the
@@ -24,7 +24,7 @@ if _scripts_root not in sys.path:
     sys.path.insert(0, _scripts_root)
 
 from aeropredict.opensky.storage import RAW_SCHEMA, write_raw  # noqa: E402
-from scripts.extract_to_bronze import (  # noqa: E402
+from scripts.extract_opensky_to_bronze import (  # noqa: E402
     SPANISH_AIRPORT_CODES,
     _count_bronze_rows,
     _extract_day,
@@ -76,7 +76,7 @@ def mock_all_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     deps: dict[str, MagicMock] = {}
 
     # Eliminate the 5 s sleep between airport iterations
-    monkeypatch.setattr("scripts.extract_to_bronze.time.sleep", MagicMock())
+    monkeypatch.setattr("scripts.extract_opensky_to_bronze.time.sleep", MagicMock())
 
     targets: dict[str, Any] = {
         "fetch_arrivals_raw": MagicMock(
@@ -97,7 +97,7 @@ def mock_all_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         "get_delta_root": MagicMock(return_value="/tmp/test_delta_extract"),
     }
     for name, mock_obj in targets.items():
-        monkeypatch.setattr(f"scripts.extract_to_bronze.{name}", mock_obj)
+        monkeypatch.setattr(f"scripts.extract_opensky_to_bronze.{name}", mock_obj)
         deps[name] = mock_obj
     return deps
 
@@ -248,7 +248,7 @@ class TestCheckpointLogic:
     ) -> None:
         """force=True causes extraction regardless of checkpoint."""
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.time.sleep", MagicMock(),
+            "scripts.extract_opensky_to_bronze.time.sleep", MagicMock(),
         )
 
         mock_arrivals = MagicMock(
@@ -264,24 +264,24 @@ class TestCheckpointLogic:
         mock_write = MagicMock(return_value=1)
 
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_arrivals_raw", mock_arrivals,
+            "scripts.extract_opensky_to_bronze.fetch_arrivals_raw", mock_arrivals,
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_departures_raw", mock_departures,
+            "scripts.extract_opensky_to_bronze.fetch_departures_raw", mock_departures,
         )
-        monkeypatch.setattr("scripts.extract_to_bronze.write_raw", mock_write)
+        monkeypatch.setattr("scripts.extract_opensky_to_bronze.write_raw", mock_write)
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.is_airport_empty",
+            "scripts.extract_opensky_to_bronze.is_airport_empty",
             MagicMock(return_value=False),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_checkpoint_dict",
+            "scripts.extract_opensky_to_bronze.get_checkpoint_dict",
             MagicMock(return_value={
                 "2026-06-12": list(SPANISH_AIRPORT_CODES),
             }),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_delta_root",
+            "scripts.extract_opensky_to_bronze.get_delta_root",
             MagicMock(return_value="/tmp/test"),
         )
 
@@ -409,7 +409,7 @@ class TestIdempotency:
         """Calling ``write_raw`` twice with identical input produces
         matching Delta rows."""
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_delta_root",
+            "scripts.extract_opensky_to_bronze.get_delta_root",
             MagicMock(return_value=delta_lake_manager),
         )
 
@@ -471,7 +471,7 @@ class TestRateLimitHandling:
     ) -> None:
         """A 429 on arrivals stops extraction for the entire day."""
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.time.sleep", MagicMock(),
+            "scripts.extract_opensky_to_bronze.time.sleep", MagicMock(),
         )
 
         mock_arrivals = MagicMock()
@@ -485,22 +485,22 @@ class TestRateLimitHandling:
         mock_write = MagicMock(return_value=1)
 
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_arrivals_raw", mock_arrivals,
+            "scripts.extract_opensky_to_bronze.fetch_arrivals_raw", mock_arrivals,
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_departures_raw", mock_departures,
+            "scripts.extract_opensky_to_bronze.fetch_departures_raw", mock_departures,
         )
-        monkeypatch.setattr("scripts.extract_to_bronze.write_raw", mock_write)
+        monkeypatch.setattr("scripts.extract_opensky_to_bronze.write_raw", mock_write)
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.is_airport_empty",
+            "scripts.extract_opensky_to_bronze.is_airport_empty",
             MagicMock(return_value=False),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_checkpoint_dict",
+            "scripts.extract_opensky_to_bronze.get_checkpoint_dict",
             MagicMock(return_value={}),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_delta_root",
+            "scripts.extract_opensky_to_bronze.get_delta_root",
             MagicMock(return_value="/tmp/test"),
         )
 
@@ -515,7 +515,7 @@ class TestRateLimitHandling:
     ) -> None:
         """A 429 on departures stops extraction; arrivals already written."""
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.time.sleep", MagicMock(),
+            "scripts.extract_opensky_to_bronze.time.sleep", MagicMock(),
         )
 
         mock_arrivals = MagicMock(
@@ -529,22 +529,22 @@ class TestRateLimitHandling:
         mock_write = MagicMock(return_value=1)
 
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_arrivals_raw", mock_arrivals,
+            "scripts.extract_opensky_to_bronze.fetch_arrivals_raw", mock_arrivals,
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_departures_raw", mock_departures,
+            "scripts.extract_opensky_to_bronze.fetch_departures_raw", mock_departures,
         )
-        monkeypatch.setattr("scripts.extract_to_bronze.write_raw", mock_write)
+        monkeypatch.setattr("scripts.extract_opensky_to_bronze.write_raw", mock_write)
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.is_airport_empty",
+            "scripts.extract_opensky_to_bronze.is_airport_empty",
             MagicMock(return_value=False),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_checkpoint_dict",
+            "scripts.extract_opensky_to_bronze.get_checkpoint_dict",
             MagicMock(return_value={}),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_delta_root",
+            "scripts.extract_opensky_to_bronze.get_delta_root",
             MagicMock(return_value="/tmp/test"),
         )
 
@@ -560,7 +560,7 @@ class TestRateLimitHandling:
     ) -> None:
         """Non-429 exceptions are collected; extraction does NOT break."""
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.time.sleep", MagicMock(),
+            "scripts.extract_opensky_to_bronze.time.sleep", MagicMock(),
         )
 
         mock_client = MagicMock()
@@ -584,26 +584,26 @@ class TestRateLimitHandling:
         mock_write = MagicMock(return_value=1)
 
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_arrivals_raw", mock_arrivals,
+            "scripts.extract_opensky_to_bronze.fetch_arrivals_raw", mock_arrivals,
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.fetch_departures_raw", mock_departures,
+            "scripts.extract_opensky_to_bronze.fetch_departures_raw", mock_departures,
         )
-        monkeypatch.setattr("scripts.extract_to_bronze.write_raw", mock_write)
+        monkeypatch.setattr("scripts.extract_opensky_to_bronze.write_raw", mock_write)
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.is_airport_empty",
+            "scripts.extract_opensky_to_bronze.is_airport_empty",
             MagicMock(return_value=False),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_checkpoint_dict",
+            "scripts.extract_opensky_to_bronze.get_checkpoint_dict",
             MagicMock(return_value={}),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.save_checkpoint_dict_entry",
+            "scripts.extract_opensky_to_bronze.save_checkpoint_dict_entry",
             MagicMock(),
         )
         monkeypatch.setattr(
-            "scripts.extract_to_bronze.get_delta_root",
+            "scripts.extract_opensky_to_bronze.get_delta_root",
             MagicMock(return_value="/tmp/test"),
         )
 
