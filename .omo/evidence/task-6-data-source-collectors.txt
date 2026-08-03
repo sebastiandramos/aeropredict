@@ -1,0 +1,55 @@
+TASK 6 — EVIDENCE: Data source collectors (OurAirports)
+Branch: explore/more-data-sources
+Date: 2026-08-03
+
+STATUS: DONE
+- src/aeropredict/sources/ourairports.py (new)
+- scripts/collect_ourairports.py (new)
+- tests/test_collect_ourairports.py (new, 15 tests)
+- Bronze tables: ourairports_airports y ourairports_runways (Delta, append csv + snapshot overwrite)
+
+API: OurAirports
+- GET https://davidmegginson.github.io/ourairports-data/airports.csv (~12.7MB)
+- GET https://davidmegginson.github.io/ourairports-data/runways.csv (~4MB)
+- Sin API key. CSV con cabecera (ident, name, type, lat/lon, elevation_ft, continent,
+  iso_country, iso_region, municipality, gps_code, iata_code, local_code...).
+- DEVIACION del plan: no se usa "heading_degT" (rumbo magnético), las pistas ya vienen
+  en rumbo true (degT). El campo de rumbos no se publica en el CSV de runways con
+  metadatos de variación magnética, asi que se persiste tal cual (sin correccion).
+
+COMPORTAMIENTO
+- download_to_file: requests.get(stream=True, timeout=300), iter_content(1MB chunks)
+- 2 tablas Bronze SEPARADAS (ourairports_airports / ourairports_runways), cada una =
+  1 fila write_raw_snapshot (overwrite) + 1 fila write_raw_csv (append). Dos tablas
+  evitan la colision snapshot-overwrite/appends descubierta en el intento en vivo de T5
+  (si se compartiera tabla, el overwrite final borraria los appends).
+- ORDEN de escritura por tabla: snapshot PRIMERO, csv despues (mismo orden que T5)
+- write_raw_csv: params {"dataset": filename}, response = texto CSV exacto
+  (BOM y CRLF conservados, sin json.dumps); write_raw_snapshot: params {"dataset": filename}
+- Normalizacion para Mongo: airports -> ident, icao_code (= gps_code, solo filas con
+  ident), name, type, latitude/longitude, elevation_ft, iso_country, iso_region,
+  municipality, iata_code; runways -> airport_ident, length_ft, width_ft, surface,
+  lighted, closed, le_ident, he_ident. _id compuesto lo pone write_airports/write_runways
+  (storage_silver, T2)
+- Contenido vacio -> skip (sin fila vacia); CSV sin cabecera "ident"/"airport_ident" ->
+  error, no se escribe esa tabla
+- MongoDB best-effort: si write_airports/write_runways lanza (Mongo caido/inalcanzable)
+  se loguea warning y el run NO falla (el Bronze ya esta escrito); stats mongo_written=0
+- --dry-run: no fetch, no write
+- Exit codes: 0 ok / dry-run / fallo parcial (warning); 1 si TODOS los archivos fallan
+
+VERIFICACION
+- pytest tests/test_collect_ourairports.py -q: 15 passed (0.60s) [TDD: rojo por
+  ImportError, luego verde; ajustes: resolucion runtime de parser/writer (los tests
+  monkeypatchean module.write_airports/write_runways y un dict con referencias fijas
+  en tiempo de import lo impedia) + correccion de assert del _id (lo compone
+  write_runways, no el collector)]
+- pytest tests/ -q: 77 passed (62 previos + 15 nuevos, sin regresiones)
+- ruff check scripts/ src/ tests/: All checks passed (line-length 100, E/F/I/W/N/UP/B/C4/RUF)
+- --dry-run en vivo 2026-08-03: Total: 2 | Escritos: 0 | Saltados: 0 | Errores: 0
+  (sin fetch, sin write)
+
+COMMIT
+- Mensaje: feat(ourairports): add airports and runways collectors
+- Solo rutas explicitas: src/aeropredict/sources/ourairports.py,
+  scripts/collect_ourairports.py, tests/test_collect_ourairports.py, .omo/evidence/task-6
