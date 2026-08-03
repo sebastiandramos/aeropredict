@@ -32,6 +32,8 @@ _schedule_indexes_ensure = False
 _aircraft_indexes_ensure = False
 _weather_indexes_ensure = False
 _aena_indexes_ensure = False
+_airports_indexes_ensure = False
+_runways_indexes_ensure = False
 
 
 def _connect() -> None:
@@ -439,4 +441,99 @@ def write_aena_infovuelos(docs: list[dict[str, Any]]) -> int:
     except BulkWriteError as e:
         n = len(e.details.get("insertedIds", [])) if e.details else 0
     logger.info("Silver (MongoDB): %d AENA infovuelos insertados", n)
+    return n
+
+
+# ===================================================================
+# AIRPORTS + RUNWAYS (OurAirports)
+# ===================================================================
+
+
+def _get_database_for(mongo_uri: str | None) -> pymongo.database.Database[Any]:
+    """Devuelve la base de datos Mongo destino.
+
+    Con ``mongo_uri`` explícito se crea una conexión dedicada (no cacheada);
+    con ``None`` se reutiliza la conexión global del módulo.
+    """
+    if mongo_uri is not None:
+        client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+        return client.get_database()
+    _connect()
+    assert _client is not None
+    return _client.get_database()
+
+
+def _get_airport_collection(mongo_uri: str | None = None) -> Collection[Any]:
+    """Devuelve colección ``airports`` con índice único por _id (ident)."""
+    global _airports_indexes_ensure
+    db = _get_database_for(mongo_uri)
+    if not _airports_indexes_ensure:
+        col = db["airports"]
+        col.create_index("_id")
+        _airports_indexes_ensure = True
+    return db["airports"]
+
+
+def write_airports(airports: list[dict[str, Any]], mongo_uri: str | None = None) -> int:
+    """Upsert de aeropuertos en MongoDB (colección ``airports``).
+
+    Cada documento se identifica por ``ident`` (usado como ``_id``). Si ya
+    existe, se reemplaza; si no, se inserta.
+
+    Args:
+        airports: Lista de dicts con al menos campo ``ident``.
+        mongo_uri: URI opcional; si se indica, se usa una conexión dedicada.
+
+    Returns:
+        Número de documentos insertados o actualizados.
+    """
+    if not airports:
+        return 0
+    col = _get_airport_collection(mongo_uri)
+    n = 0
+    for doc in airports:
+        doc["_id"] = doc["ident"]
+        result = col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+        if result.upserted_id is not None or result.modified_count > 0:
+            n += 1
+    logger.info("Silver (MongoDB): %d airports upsertados", n)
+    return n
+
+
+def _get_runway_collection(mongo_uri: str | None = None) -> Collection[Any]:
+    """Devuelve colección ``runways`` con índice único por _id."""
+    global _runways_indexes_ensure
+    db = _get_database_for(mongo_uri)
+    if not _runways_indexes_ensure:
+        col = db["runways"]
+        col.create_index("_id")
+        _runways_indexes_ensure = True
+    return db["runways"]
+
+
+def write_runways(runways: list[dict[str, Any]], mongo_uri: str | None = None) -> int:
+    """Upsert de pistas en MongoDB (colección ``runways``).
+
+    Cada documento se identifica por un ``_id`` determinista compuesto:
+    ``f"{airport_ident}:{le_ident}:{he_ident}"``. Si ya existe, se reemplaza.
+
+    Args:
+        runways: Lista de dicts con campos ``airport_ident``, ``le_ident``,
+            ``he_ident``.
+        mongo_uri: URI opcional; si se indica, se usa una conexión dedicada.
+
+    Returns:
+        Número de documentos insertados o actualizados.
+    """
+    if not runways:
+        return 0
+    col = _get_runway_collection(mongo_uri)
+    n = 0
+    for doc in runways:
+        doc["_id"] = f"{doc['airport_ident']}:{doc['le_ident']}:{doc['he_ident']}"
+        result = col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+        if result.upserted_id is not None or result.modified_count > 0:
+            n += 1
+    logger.info("Silver (MongoDB): %d runways upsertados", n)
     return n

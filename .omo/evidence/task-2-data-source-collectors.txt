@@ -1,0 +1,74 @@
+=== Todo 2 evidence: write_airports / write_runways Mongo helpers ===
+Branch: explore/more-data-sources
+Date: 2026-08-03T06:53:35Z
+
+############################################################
+# A) THE BUG (found, root-caused)
+############################################################
+storage_silver.py:473 and :510 called `col.create_index("_id", unique=True)`.
+MongoDB rejects this because `_id` is ALWAYS unique by default; the `unique`
+option is not valid for an `_id` index specification:
+
+    OperationFailure: The field 'unique' is not valid for an _id index specification
+
+Fix applied (both places): `col.create_index("_id")` (drop `unique=True`).
+The `_id` index remains unique by MongoDB semantics; `_id` = `ident` (airports)
+and `f"{airport_ident}:{le_ident}:{he_ident}"` (runways) is preserved.
+The write_aircraft pattern (:321) is untouched: it indexes `icao24` (a NON-_id
+field), so its `unique=True` is correct.
+
+############################################################
+# B) Unit tests (updated: index assertions now expect no unique flag)
+############################################################
+Command: .conda/envs/aeropredict/bin/python -m pytest tests/test_storage_silver_helpers.py -q
+
+............                                                             [100%]
+12 passed in 0.68s
+pytest exit: 0
+
+############################################################
+# C) REAL MongoDB verification (mandatory — bug only reproduces
+#    against a real server, mocks would hide it)
+############################################################
+Services: docker compose ps -> aeropredict-mongo mongo:7 Up (healthy), :27017
+Command: .conda/envs/aeropredict/bin/python .omo/scripts/t2_real_mongo_verify.py
+(mongodb://localhost:27017/aeropredict_t2_verify — throwaway DB, dropped after)
+
+PASS: _id index created without unique flag (airports, runways)
+PASS: 2 airports + 2 runways upserted to real MongoDB
+PASS: re-upsert of identical docs does not duplicate (write counts 2/2, docs stay 2)
+PASS: _id=ident for airports, _id=airport_ident:le_ident:he_ident for runways
+REAL-MONGO VERIFICATION: ALL CHECKS PASSED
+script exit: 0
+
+Note: real MongoDB reports modified_count=1 on replace_one of a byte-identical
+doc (replace rewrites; only atomic operators no-op), so the idempotency
+invariant asserted is "no duplicate documents / _id never duplicated", not
+"return 0". The helper contract (inserted-or-updated, never duplicated) holds.
+
+############################################################
+# D) Full suite regression (no regressions)
+############################################################
+Command: .conda/envs/aeropredict/bin/python -m pytest tests/ -q
+
+..................                                                       [100%]
+18 passed in 1.41s
+pytest exit: 0
+
+############################################################
+# E) Ruff
+############################################################
+Command: .conda/envs/aeropredict/bin/ruff check src/aeropredict/opensky/storage_silver.py tests/test_storage_silver_helpers.py
+
+All checks passed!
+ruff exit: 0
+
+############################################################
+# F) Scope fidelity
+############################################################
+- write_airports/write_runways upsert logic NOT refactored (only the index spec).
+- write_aircraft (storage_silver.py:324) NOT touched; T1 storage.py helpers NOT touched.
+- Only files committed: src/aeropredict/opensky/storage_silver.py,
+  tests/test_storage_silver_helpers.py, .omo/evidence/task-2-data-source-collectors.txt.
+- pyproject.toml modified in the working tree is parallel Todo-3 work (holidays
+  dep), intentionally NOT staged/committed here.
