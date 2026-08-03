@@ -1,24 +1,15 @@
 name: Data Collectors (Bronze)
 
-# Colectores diarios de datos complementarios → Bronze Delta (R2).
-# Fuentes sin API key: NOAA AWC (METAR), Nager.Date + python-holidays,
-# EUROCONTROL PRU (CSV anual), OurAirports (airports + runways),
-# ENAIRE servAIS (NOTAM). Un paso por collector (continue-on-error) para
-# aislar fallos: una fuente caida no bloquea al resto ni rompe el job.
+# Lint + tests del repo. Los 5 colectores sin API key (NOAA AWC METAR,
+# Nager.Date + python-holidays, EUROCONTROL PRU, OurAirports, ENAIRE servAIS)
+# ahora corren dentro del job `extract` de pipeline.yml con continue-on-error
+# (aislamiento de fallos). Este workflow es el único job de CI que ejecuta
+# `pytest tests/` + `ruff check` (job `lint-test`).
 
 on:
   schedule:
     - cron: "0 6 * * *"  # daily 06:00 UTC
   workflow_dispatch:
-    inputs:
-      metar_days:
-        description: "METAR lookback window in days (collect_metar --days)"
-        required: false
-        default: "2"
-      eurocontrol_year:
-        description: "EUROCONTROL PRU year (empty = current year)"
-        required: false
-        default: ""
 
 concurrency:
   group: data-collectors
@@ -28,59 +19,6 @@ env:
   OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
 
 jobs:
-  collect:
-    name: Collect 5 data sources → Bronze
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e .
-      - uses: dopplerhq/cli-action@v3
-
-      - name: Collect METAR (NOAA AWC) → bronze/metar_awc
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_metar.py --days "$METAR_DAYS"
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-          METAR_DAYS: ${{ github.event.inputs.metar_days || '2' }}
-
-      - name: Collect Spanish holidays (Nager.Date + python-holidays) → bronze/holidays_*
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_holidays.py
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-
-      - name: Collect EUROCONTROL PRU CSV → bronze/eurocontrol_pru
-        continue-on-error: true
-        run: |
-          if [ -n "$EUROCONTROL_YEAR" ]; then
-            doppler run -- python scripts/collect_eurocontrol.py --year "$EUROCONTROL_YEAR"
-          else
-            doppler run -- python scripts/collect_eurocontrol.py
-          fi
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-          EUROCONTROL_YEAR: ${{ github.event.inputs.eurocontrol_year || '' }}
-
-      - name: Collect OurAirports (airports + runways) → bronze/ourairports_*
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_ourairports.py
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-
-      - name: Collect NOTAM (ENAIRE servAIS) → bronze/notam_enaire
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_notam.py
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-
   lint-test:
     name: Lint + tests
     runs-on: ubuntu-latest
