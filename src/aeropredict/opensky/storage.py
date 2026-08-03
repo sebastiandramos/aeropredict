@@ -14,10 +14,12 @@ Arquitectura medallion (bronce → plata → oro):
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -500,3 +502,198 @@ def cache_empty_airport(
         storage_options=get_storage_options(),
     )
     logger.debug("Cache empty: %s %s %s", airport_code, flight_date, endpoint)
+
+
+# ===================================================================
+# BRONZE - Helpers aditivos (CSV crudo, snapshots, dedup)
+# ===================================================================
+
+RAW_ROW_SCHEMA = pa.schema([
+    pa.field("source", pa.string()),
+    pa.field("endpoint", pa.string()),
+    pa.field("params", pa.string()),
+    pa.field("response", pa.string()),
+    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+])
+
+
+def write_raw_csv(
+    source_name: str,
+    endpoint: str,
+    params: dict[str, Any] | None,
+    csv_text: str,
+    delta_root: str,
+    storage_options: dict[str, str] | None = None,
+) -> int:
+    """Escribe CSV crudo de cualquier fuente externa en Bronze.
+
+    Tabla: {delta_root}/bronze/{source_name}/
+    Sin particionado (compatible con write_raw_json). La columna ``response``
+    guarda el texto CSV exactamente como llega — BOM, CRLF y encoding
+    incluidos — sin ``json.dumps`` ni reescritura. El CSV se parsea solo para
+    estadísticas (csv.reader sobre StringIO), nunca para alterar el texto.
+
+    Args:
+        source_name: Identificador de la fuente (ej. ``eurocontrol_pru``).
+        endpoint: URL del endpoint consultado.
+        params: Parámetros de la petición.
+        csv_text: Contenido CSV crudo (str).
+        delta_root: Ruta base de datos Delta.
+        storage_options: Opciones de storage remoto (R2/Azure).
+
+    Returns:
+        Número de filas escritas (1 por petición).
+    """
+    table_uri = _build_table_uri(delta_root, "bronze", source_name)
+    now = datetime.now(UTC)
+
+    row = {
+        "source": source_name,
+        "endpoint": endpoint,
+        "params": json.dumps(params) if params else None,
+        "response": csv_text,
+        "fetched_at": now,
+    }
+
+    table = pa.Table.from_pylist([row], schema=RAW_ROW_SCHEMA)
+    opts = storage_options or get_storage_options()
+
+    # 1. Escritura primaria (donde apunte delta_root)
+    write_deltalake(table_uri, table, mode="append", storage_options=opts)
+    csv_rows = sum(1 for _ in csv.reader(StringIO(csv_text)))
+    logger.info(
+        "Bronze CSV (%s): %s (%s) → %s, %d filas CSV (header incluido)",
+        source_name, endpoint, params, table_uri, csv_rows,
+    )
+
+    # 2. Dual-write
+    if _is_cloud_uri(delta_root):
+        # root es cloud → replicar a local
+        local_uri = _build_table_uri(_LOCAL_ROOT, "bronze", source_name)
+        write_deltalake(local_uri, table, mode="append")
+        logger.info("Bronze dual local (%s): %s", source_name, local_uri)
+    else:
+        # root es local → replicar a cloud si hay credenciales
+        cloud_root = _get_cloud_root()
+        if cloud_root:
+            cloud_uri = _build_table_uri(cloud_root, "bronze", source_name)
+            write_deltalake(cloud_uri, table, mode="append", storage_options=opts)
+            logger.info("Bronze dual cloud (%s): %s", source_name, cloud_uri)
+
+    return 1
+
+
+def write_raw_snapshot(
+    source_name: str,
+    endpoint: str,
+    params: dict[str, Any] | None,
+    response_data: Any,
+    delta_root: str,
+    storage_options: dict[str, Any] | None = None,
+) -> int:
+    """Escribe la última respuesta de una fuente como snapshot en Bronze.
+
+    Tabla: {delta_root}/bronze/{source_name}/
+    Sin particionado, ``mode="overwrite"``: la tabla contiene solo el último
+    estado. Si ``response_data`` está vacío (None, {}, [], "") no escribe nada
+    y devuelve 0, para que un run fallido no destruya el snapshot bueno previo.
+
+    Args:
+        source_name: Identificador de la fuente.
+        endpoint: URL del endpoint consultado.
+        params: Parámetros de la petición.
+        response_data: Respuesta (dict/list/str) a guardar como snapshot.
+        delta_root: Ruta base de datos Delta.
+        storage_options: Opciones de storage remoto (R2/Azure).
+
+    Returns:
+        Número de filas escritas (1 si escribió, 0 si se saltó por vacío).
+    """
+    # Skip si la respuesta está vacía: no destruir el snapshot bueno previo.
+    if not response_data:
+        logger.info(
+            "Bronze snapshot (%s): respuesta vacía para %s, saltando",
+            source_name, endpoint,
+        )
+        return 0
+
+    table_uri = _build_table_uri(delta_root, "bronze", source_name)
+    now = datetime.now(UTC)
+
+    row = {
+        "source": source_name,
+        "endpoint": endpoint,
+        "params": json.dumps(params) if params else None,
+        "response": json.dumps(response_data, ensure_ascii=False),
+        "fetched_at": now,
+    }
+
+    table = pa.Table.from_pylist([row], schema=RAW_ROW_SCHEMA)
+    opts = storage_options or get_storage_options()
+
+    # 1. Escritura primaria (donde apunte delta_root)
+    write_deltalake(table_uri, table, mode="overwrite", storage_options=opts)
+    logger.info(
+        "Bronze snapshot (%s): %s (%s) → %s", source_name, endpoint, params, table_uri,
+    )
+
+    # 2. Dual-write
+    if _is_cloud_uri(delta_root):
+        # root es cloud → replicar a local
+        local_uri = _build_table_uri(_LOCAL_ROOT, "bronze", source_name)
+        write_deltalake(local_uri, table, mode="overwrite")
+        logger.info("Bronze snapshot dual local (%s): %s", source_name, local_uri)
+    else:
+        # root es local → replicar a cloud si hay credenciales
+        cloud_root = _get_cloud_root()
+        if cloud_root:
+            cloud_uri = _build_table_uri(cloud_root, "bronze", source_name)
+            write_deltalake(cloud_uri, table, mode="overwrite", storage_options=opts)
+            logger.info("Bronze snapshot dual cloud (%s): %s", source_name, cloud_uri)
+
+    return 1
+
+
+def table_row_exists(
+    delta_root: str,
+    source_name: str,
+    endpoint: str,
+    params: dict[str, Any] | None,
+) -> bool:
+    """Comprueba si una fila (endpoint, params) ya existe en una tabla Bronze.
+
+    Lee SOLO las columnas ``endpoint`` y ``params`` (nunca ``response``) para
+    soportar append+dedup sin cargar respuestas enteras. Si la tabla no existe
+    devuelve ``False``.
+
+    Args:
+        delta_root: Ruta base de datos Delta.
+        source_name: Identificador de la fuente.
+        endpoint: URL del endpoint consultado.
+        params: Parámetros de la petición (mismo formato usado al escribir).
+
+    Returns:
+        ``True`` si existe una fila con endpoint y params exactos.
+    """
+    import pyarrow.compute as pc
+    from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
+
+    from .config import get_storage_options
+
+    table_uri = _build_table_uri(delta_root, "bronze", source_name)
+    params_json = json.dumps(params) if params else None
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+        table = dt.to_pyarrow_table(columns=["endpoint", "params"])
+    except TableNotFoundError:
+        return False
+
+    endpoint_match = pc.equal(table.column("endpoint"), endpoint)
+    params_match = (
+        pc.is_null(table.column("params"))
+        if params_json is None
+        else pc.equal(table.column("params"), params_json)
+    )
+    mask = pc.and_(endpoint_match, params_match)
+    return pc.sum(mask).as_py() > 0
