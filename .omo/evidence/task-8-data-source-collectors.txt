@@ -1,0 +1,58 @@
+TASK 8 — EVIDENCE: CI workflow + sync registration + docs (data collectors)
+Branch: explore/more-data-sources
+Date: 2026-08-03
+
+STATUS: DONE
+- .github/workflows/data-collectors.yml (new): cron diario 06:00 UTC, concurrency
+  group propio `data-collectors` (cancel-in-progress: true), workflow_dispatch con
+  inputs (metar_days, eurocontrol_year), env OPENSKY_DELTA_ROOT=s3://aeropredict-landing-zone.
+  Jobs:
+  - collect: checkout -> setup-python 3.12 -> pip install -e . -> dopplerhq/cli-action@v3
+    -> 1 paso por collector con continue-on-error: true (aislamiento de fallo):
+    collect_metar, collect_holidays, collect_eurocontrol (--year condicional),
+    collect_ourairports, collect_notam. Timeout 30min.
+  - lint-test: pip install -e ".[dev]" -> pytest tests/ -> ruff check scripts/ src/ tests/.
+    Unico job de CI que ejecuta la suite de tests (pipeline.yml no la ejecuta).
+- scripts/sync_r2_to_local.py: TABLES_TO_SYNC +8 tablas:
+  bronze/aena_infovuelos, bronze/eurocontrol_pru, bronze/holidays_nager_date,
+  bronze/holidays_python, bronze/metar_awc, bronze/notam_enaire,
+  bronze/ourairports_airports, bronze/ourairports_runways.
+  Entradas solo nombre de tabla (mismo formato que las existentes, sin partition hints).
+  _sync_table tolera tablas ausentes: try/except en DeltaTable(r2_uri) -> retorna False
+  (verificado en :75-79 del fichero, sin cambios).
+- README.md: diagrama de flujo de datos actualizado (linea GitHub Actions + 5
+  collectors) y nueva seccion "Colectores de datos complementarios" con tabla
+  script + Bronze table(s) + fuente.
+- AGENTS.md: nueva seccion "Data collectors" tras la de AENA hourly; gotcha de
+  "No tests directory" corregido (la suite tests/ existe y solo la corre
+  data-collectors.yml).
+
+VERIFICACION
+- YAML: python -c "import yaml, sys; yaml.safe_load(open('.github/workflows/data-collectors.yml'))"
+  -> exit 0 (actionlint no disponible: npx sin Node en el entorno; YAML parse +
+  revision manual aceptado por el plan)
+- pytest tests/ -q: 77 passed
+- ruff check scripts/ src/ tests/: All checks passed
+- git diff --name-only: solo .github/workflows/data-collectors.yml (nuevo),
+  scripts/sync_r2_to_local.py, README.md, AGENTS.md, .omo/evidence/task-8
+  -> .github/workflows/pipeline.yml y .github/workflows/aena-infovuelos-hourly.yml
+  INTACTOS (no tocados, confirmado por git status/diff)
+- git log --oneline -1: commit ci(collectors) en top; git status limpio
+
+COMO EJECUTAR
+- CI: workflow data-collectors.yml (cron 06:00 UTC en main; manual via
+  workflow_dispatch con inputs opcionales; requiere secrets.DOPPLER_TOKEN como
+  los workflows existentes).
+- Local dry-run (sin red, sin escrituras):
+  python scripts/collect_metar.py --dry-run
+  python scripts/collect_holidays.py --dry-run
+  python scripts/collect_eurocontrol.py --dry-run
+  python scripts/collect_ourairports.py --dry-run
+  python scripts/collect_notam.py --dry-run
+- Sync R2 -> local (lista las 16 tablas registradas, tolera las ausentes):
+  python scripts/sync_r2_to_local.py --dry-run
+
+COMMIT
+- Mensaje: ci(collectors): add data-collectors workflow, register bronze tables and update docs
+- Solo rutas explicitas: .github/workflows/data-collectors.yml,
+  scripts/sync_r2_to_local.py, README.md, AGENTS.md, .omo/evidence/task-8 (git add -f)

@@ -7,11 +7,16 @@ TFM — Predicción de retrasos de vuelos.
 ### Flujo completo (producción)
 
 ```
-GitHub Actions (cron 06:30 / 19:30 UTC; AENA: cron horario minuto 7 UTC)
+GitHub Actions (cron 06:30 / 19:30 UTC; AENA: cron horario minuto 7 UTC; data-collectors: cron diario 06:00 UTC)
   ↓
 extract_opensky_to_bronze.py → Bronze (R2)
 collect_weather.py           → Bronze (R2) — Open-Meteo weather
 collect_aena_infovuelos.py   → Bronze (R2) — AENA infovuelos (horario)
+collect_metar.py             → Bronze (R2) — METAR (NOAA AWC)
+collect_holidays.py          → Bronze (R2) — festivos España (Nager.Date + python-holidays)
+collect_eurocontrol.py       → Bronze (R2) — EUROCONTROL PRU (CSV anual)
+collect_ourairports.py       → Bronze (R2) — OurAirports (airports + runways)
+collect_notam.py             → Bronze (R2) — NOTAM (ENAIRE servAIS)
   ↓
 bronze_to_silver.py → Silver (MongoDB Atlas) — flights + weather + aena_infovuelos
   ↓
@@ -19,6 +24,22 @@ silver_to_gold.py          → Gold (PostgreSQL — Neon) — agregaciones de vu
 silver_to_gold_entities.py → Gold (PostgreSQL — Neon) — tablas entidad raw
 build_feature_store.py     → Gold (PostgreSQL — Neon) — feature store
 ```
+
+### Colectores de datos complementarios (workflow `data-collectors.yml`)
+
+Fuentes sin API key, escritura directa a Bronze (R2). El workflow corre un paso por
+collector (aislamiento de fallos) más un job `lint-test` (`pytest tests/` + `ruff check`):
+
+| Script | Bronze table(s) | Fuente |
+|---|---|---|
+| `scripts/collect_metar.py` | `bronze/metar_awc` | NOAA Aviation Weather Center |
+| `scripts/collect_holidays.py` | `bronze/holidays_nager_date`, `bronze/holidays_python` | Nager.Date + python-holidays |
+| `scripts/collect_eurocontrol.py` | `bronze/eurocontrol_pru` | EUROCONTROL PRU (CSV anual, `--year`) |
+| `scripts/collect_ourairports.py` | `bronze/ourairports_airports`, `bronze/ourairports_runways` | OurAirports (Unlicense) |
+| `scripts/collect_notam.py` | `bronze/notam_enaire` | ENAIRE servAIS (ArcGIS FeatureServer) |
+
+Todas las tablas soportan `--dry-run`, no requieren claves y están registradas en
+`TABLES_TO_SYNC` de `scripts/sync_r2_to_local.py` (incluida `bronze/aena_infovuelos`).
 
 ### Flujo mock (desarrollo local, sin OpenSky API)
 
