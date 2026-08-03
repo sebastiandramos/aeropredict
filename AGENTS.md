@@ -16,18 +16,18 @@ silver_to_gold_entities.py → PostgreSQL gold.{flights,aircraft,weather,aena_in
 build_feature_store.py→ PostgreSQL gold.feature_store (ML features)
 ```
 
-**CI** (`.github/workflows/pipeline.yml`): runs at 06:30/19:30 UTC, 5 sequential jobs, 30min/15min timeouts, R2 storage, 3 OpenSky client accounts.
+**CI** (`.github/workflows/pipeline.yml`): runs at 06:30/19:30 UTC, 5 sequential jobs, 30min/15min timeouts, R2 storage, 3 OpenSky client accounts. The `extract` job also runs Open-Meteo weather + the 5 keyless collectors with `continue-on-error: true` (OpenSky is CRITICAL — no `continue-on-error`; downstream jobs depend on flights). `.github/workflows/data-collectors.yml` is now lint-test only (daily 06:00 UTC).
 
 **AENA hourly**: `collect_aena_infovuelos.py` runs hourly (separate workflow, cron minute 7 UTC) → Bronze `bronze/aena_infovuelos`. `bronze_to_silver.py` also promotes AENA Bronze → Silver using per-hour checkpoints (`checkpoints_bronze_to_silver_aena`), distinct from the OpenSky date checkpoint.
 
-**Data collectors** (`.github/workflows/data-collectors.yml`, cron daily 06:00 UTC, own `concurrency` group `data-collectors`): 5 collectors without API keys, one step per collector (`continue-on-error`, failure isolation) → Bronze:
+**Data collectors**: the 5 keyless collectors run inside the `extract` job of `.github/workflows/pipeline.yml` (06:30/19:30 UTC) with `continue-on-error: true` (failure isolation); OpenSky is critical (no `continue-on-error`) and Open-Meteo weather also uses `continue-on-error` → Bronze:
 - `collect_metar.py` → `bronze/metar_awc` (NOAA AWC)
 - `collect_holidays.py` → `bronze/holidays_nager_date` + `bronze/holidays_python` (Nager.Date + python-holidays)
 - `collect_eurocontrol.py` → `bronze/eurocontrol_pru` (EUROCONTROL PRU, `--year`)
 - `collect_ourairports.py` → `bronze/ourairports_airports` + `bronze/ourairports_runways` (OurAirports) + Mongo `airports`/`runways`
 - `collect_notam.py` → `bronze/notam_enaire` (ENAIRE servAIS; 401/403 → graceful exit 0 + warning)
 
-All tables are registered in `TABLES_TO_SYNC` (`scripts/sync_r2_to_local.py`). The same workflow runs `pytest tests/` + `ruff check scripts/ src/ tests/` (job `lint-test`) — the only CI job that runs the test suite.
+All tables are registered in `TABLES_TO_SYNC` (`scripts/sync_r2_to_local.py`). `.github/workflows/data-collectors.yml` (cron daily 06:00 UTC, own `concurrency` group `data-collectors`) is now lint-test only: it runs `pytest tests/` + `ruff check scripts/ src/ tests/` (job `lint-test`) — the only CI job that runs the test suite.
 
 ## Key Commands
 

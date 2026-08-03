@@ -7,7 +7,7 @@ TFM — Predicción de retrasos de vuelos.
 ### Flujo completo (producción)
 
 ```
-GitHub Actions (cron 06:30 / 19:30 UTC; AENA: cron horario minuto 7 UTC; data-collectors: cron diario 06:00 UTC)
+GitHub Actions (cron 06:30 / 19:30 UTC; AENA: cron horario minuto 7 UTC; data-collectors: lint+test cron diario 06:00 UTC)
   ↓
 extract_opensky_to_bronze.py → Bronze (R2)
 collect_weather.py           → Bronze (R2) — Open-Meteo weather
@@ -25,10 +25,13 @@ silver_to_gold_entities.py → Gold (PostgreSQL — Neon) — tablas entidad raw
 build_feature_store.py     → Gold (PostgreSQL — Neon) — feature store
 ```
 
-### Colectores de datos complementarios (workflow `data-collectors.yml`)
+### Colectores de datos complementarios (job `extract` de `pipeline.yml`)
 
-Fuentes sin API key, escritura directa a Bronze (R2). El workflow corre un paso por
-collector (aislamiento de fallos) más un job `lint-test` (`pytest tests/` + `ruff check`):
+Fuentes sin API key, escritura directa a Bronze (R2). Corren en el job `extract` de
+`pipeline.yml` (06:30/19:30 UTC) con `continue-on-error: true` (aislamiento de
+fallos: una fuente caída no bloquea al resto). El workflow `data-collectors.yml`
+ahora solo corre `lint-test` (`pytest tests/` + `ruff check`) cada día a las
+06:00 UTC:
 
 | Script | Bronze table(s) | Fuente |
 |---|---|---|

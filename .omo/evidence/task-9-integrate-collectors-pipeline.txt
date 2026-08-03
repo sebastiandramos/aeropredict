@@ -1,0 +1,47 @@
+# Task 9 — Integrar colectores en pipeline extract
+
+Integración de los 5 colectores sin API key (METAR, festivos, EUROCONTROL PRU,
+OurAirports, NOTAM) en el job `extract` de `.github/workflows/pipeline.yml` con
+`continue-on-error: true` (aislamiento de fallos; OpenSky crítico sin
+continue-on-error, Open-Meteo también con continue-on-error). El workflow
+`.github/workflows/data-collectors.yml` queda solo como lint-test (cron diario
+06:00 UTC). Docs sincronizadas en README.md y AGENTS.md. Sin cambios de código.
+
+## Commands
+
+$ GIT_MASTER=1 git status --short   # antes de editar (working tree limpio)
+(no output — clean)
+
+$ GIT_MASTER=1 git status --short   # después de editar
+ M .github/workflows/data-collectors.yml
+ M .github/workflows/pipeline.yml
+ M AGENTS.md
+ M README.md
+
+$ .conda/envs/aeropredict/bin/python -c "import yaml; yaml.safe_load(open('.github/workflows/pipeline.yml')); yaml.safe_load(open('.github/workflows/data-collectors.yml')); print('YAML OK')"
+YAML OK
+
+$ .conda/envs/aeropredict/bin/python -m pytest tests/ 2>&1 | tail -5
+tests/test_collect_weather.py .                                          [ 79%]
+tests/test_storage_helpers.py ....                                       [ 84%]
+tests/test_storage_silver_helpers.py ............                        [100%]
+
+============================== 77 passed in 1.69s ==============================
+
+$ .conda/envs/aeropredict/bin/ruff check scripts/ src/ tests/
+All checks passed!
+
+$ GIT_MASTER=1 git log --oneline origin/main..HEAD   # estado final
+ee66fae ci(collectors): keep data-collectors workflow as lint-test only
+1b31145 ci(pipeline): integrate keyless data collectors into extract job
+6351222 ci(collectors): add data-collectors workflow, register bronze tables and update docs
+7421d8f feat(ourairports): add airports and runways collectors
+c37e07d feat(collectors): add NOTAM collector (ENAIRE servAIS ArcGIS)
+6803176 feat(collectors): add EUROCONTROL PRU CSV collector
+fe378fd feat(metar): add NOAA AWC METAR collector
+a32eadb feat(holidays): add Nager.Date and python-holidays collectors
+9e6d870 feat(silver): add write_airports and write_runways upsert helpers
+b763d96 feat(storage): add write_raw_csv, write_raw_snapshot and table_row_exists helpers
+
+$ GIT_MASTER=1 git status --short   # post-commit (limpio)
+(no output — clean)
