@@ -8,6 +8,10 @@ Colecciones:
   - ``state_vectors``:    snapshots de estado (1 doc por state vector)
   - ``track_waypoints``:  waypoints de trayectorias (1 doc por waypoint)
   - ``aena_infovuelos``:  información de vuelos AENA (1 doc por consulta)
+  - ``metar``:            informes METAR (NOAA AWC, 1 doc por informe)
+  - ``holidays``:         festivos de España (Nager.Date + python-holidays)
+  - ``eurocontrol_pru``:  filas CSV anuales EUROCONTROL PRU (1 doc por fila)
+  - ``notam``:            NOTAM de ENAIRE (1 doc por feature GeoJSON)
 """
 
 from __future__ import annotations
@@ -34,6 +38,10 @@ _weather_indexes_ensure = False
 _aena_indexes_ensure = False
 _airports_indexes_ensure = False
 _runways_indexes_ensure = False
+_metar_indexes_ensure = False
+_holidays_indexes_ensure = False
+_eurocontrol_indexes_ensure = False
+_notam_indexes_ensure = False
 
 
 def _connect() -> None:
@@ -536,4 +544,186 @@ def write_runways(runways: list[dict[str, Any]], mongo_uri: str | None = None) -
         if result.upserted_id is not None or result.modified_count > 0:
             n += 1
     logger.info("Silver (MongoDB): %d runways upsertados", n)
+    return n
+
+
+# ===================================================================
+# METAR (NOAA AWC)
+# ===================================================================
+
+
+def _get_metar_collection() -> Collection[Any]:
+    """Devuelve colección ``metar`` con índices."""
+    global _metar_indexes_ensure
+    _connect()
+    assert _client is not None
+    db = _client.get_database()
+    if not _metar_indexes_ensure:
+        col = db["metar"]
+        col.create_index([
+            ("icao_id", pymongo.ASCENDING),
+            ("obs_time", pymongo.ASCENDING),
+        ])
+        _metar_indexes_ensure = True
+    return db["metar"]
+
+
+def write_metar(metar_reports: list[dict[str, Any]]) -> int:
+    """Inserta informes METAR en MongoDB (colección ``metar``).
+
+    Args:
+        metar_reports: Lista de dicts normalizados (1 doc por informe METAR).
+
+    Returns:
+        Número de documentos insertados.
+    """
+    if not metar_reports:
+        return 0
+    col = _get_metar_collection()
+    now = datetime.now(UTC)
+    for doc in metar_reports:
+        doc.setdefault("ingested_at", now)
+    try:
+        result = col.insert_many(metar_reports, ordered=False)
+        n = len(result.inserted_ids)
+    except BulkWriteError as e:
+        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    logger.info("Silver (MongoDB): %d METAR insertados", n)
+    return n
+
+
+# ===================================================================
+# HOLIDAYS (Nager.Date + python-holidays)
+# ===================================================================
+
+
+def _get_holidays_collection() -> Collection[Any]:
+    """Devuelve colección ``holidays`` con índices."""
+    global _holidays_indexes_ensure
+    _connect()
+    assert _client is not None
+    db = _client.get_database()
+    if not _holidays_indexes_ensure:
+        col = db["holidays"]
+        col.create_index([
+            ("date", pymongo.ASCENDING),
+            ("name", pymongo.ASCENDING),
+            ("source", pymongo.ASCENDING),
+        ])
+        _holidays_indexes_ensure = True
+    return db["holidays"]
+
+
+def write_holidays(holidays: list[dict[str, Any]]) -> int:
+    """Inserta festivos en MongoDB (colección ``holidays``).
+
+    Args:
+        holidays: Lista de dicts normalizados (1 doc por festivo).
+
+    Returns:
+        Número de documentos insertados.
+    """
+    if not holidays:
+        return 0
+    col = _get_holidays_collection()
+    now = datetime.now(UTC)
+    for doc in holidays:
+        doc.setdefault("ingested_at", now)
+    try:
+        result = col.insert_many(holidays, ordered=False)
+        n = len(result.inserted_ids)
+    except BulkWriteError as e:
+        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    logger.info("Silver (MongoDB): %d holidays insertados", n)
+    return n
+
+
+# ===================================================================
+# EUROCONTROL PRU (CSVs anuales)
+# ===================================================================
+
+
+def _get_eurocontrol_collection() -> Collection[Any]:
+    """Devuelve colección ``eurocontrol_pru`` con índices."""
+    global _eurocontrol_indexes_ensure
+    _connect()
+    assert _client is not None
+    db = _client.get_database()
+    if not _eurocontrol_indexes_ensure:
+        col = db["eurocontrol_pru"]
+        col.create_index([
+            ("source_file", pymongo.ASCENDING),
+            ("year", pymongo.ASCENDING),
+        ])
+        _eurocontrol_indexes_ensure = True
+    return db["eurocontrol_pru"]
+
+
+def write_eurocontrol_pru(rows: list[dict[str, Any]]) -> int:
+    """Inserta filas CSV de EUROCONTROL PRU en MongoDB (colección ``eurocontrol_pru``).
+
+    Args:
+        rows: Lista de dicts (1 doc por fila CSV, con ``source_file`` y ``year``).
+
+    Returns:
+        Número de documentos insertados.
+    """
+    if not rows:
+        return 0
+    col = _get_eurocontrol_collection()
+    now = datetime.now(UTC)
+    for doc in rows:
+        doc.setdefault("ingested_at", now)
+    try:
+        result = col.insert_many(rows, ordered=False)
+        n = len(result.inserted_ids)
+    except BulkWriteError as e:
+        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    logger.info("Silver (MongoDB): %d EUROCONTROL PRU filas insertadas", n)
+    return n
+
+
+# ===================================================================
+# NOTAM (ENAIRE servAIS)
+# ===================================================================
+
+
+def _get_notam_collection() -> Collection[Any]:
+    """Devuelve colección ``notam`` con índices."""
+    global _notam_indexes_ensure
+    _connect()
+    assert _client is not None
+    db = _client.get_database()
+    if not _notam_indexes_ensure:
+        col = db["notam"]
+        col.create_index([
+            ("snapshot_at", pymongo.ASCENDING),
+            ("layer", pymongo.ASCENDING),
+        ])
+        _notam_indexes_ensure = True
+    return db["notam"]
+
+
+def write_notam(features: list[dict[str, Any]]) -> int:
+    """Inserta features NOTAM en MongoDB (colección ``notam``).
+
+    Args:
+        features: Lista de dicts (1 doc por feature GeoJSON, con ``layer``
+            y ``snapshot_at``).
+
+    Returns:
+        Número de documentos insertados.
+    """
+    if not features:
+        return 0
+    col = _get_notam_collection()
+    now = datetime.now(UTC)
+    for doc in features:
+        doc.setdefault("ingested_at", now)
+    try:
+        result = col.insert_many(features, ordered=False)
+        n = len(result.inserted_ids)
+    except BulkWriteError as e:
+        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    logger.info("Silver (MongoDB): %d NOTAM insertados", n)
     return n

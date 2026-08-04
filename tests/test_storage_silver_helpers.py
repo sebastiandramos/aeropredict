@@ -5,6 +5,7 @@ cada llamada a ``replace_one`` (filter, doc) y mantiene un store por ``_id``
 con semántica upsert fiel a MongoDB.
 """
 
+import pymongo
 import pytest
 
 from aeropredict.opensky import storage_silver
@@ -16,14 +17,26 @@ class FakeReplaceResult:
         self.modified_count = modified_count
 
 
+class FakeInsertManyResult:
+    def __init__(self, inserted_ids):
+        self.inserted_ids = inserted_ids
+
+
+class FakeBulkWriteError(pymongo.errors.BulkWriteError):
+    def __init__(self, details=None):
+        super().__init__(details)
+
+
 class FakeCollection:
     """Fake de pymongo.Collection con upsert por ``_id`` y registro de llamadas."""
 
-    def __init__(self, name):
+    def __init__(self, name, insert_many_error=None):
         self.name = name
         self.docs = {}
         self.replace_calls = []
+        self.insert_many_calls = []
         self.create_index_calls = []
+        self._insert_many_error = insert_many_error
 
     def create_index(self, *args, **kwargs):
         self.create_index_calls.append((args, kwargs))
@@ -37,6 +50,12 @@ class FakeCollection:
             return FakeReplaceResult(None, 1 if changed else 0)
         self.docs[_id] = dict(doc)
         return FakeReplaceResult(_id, 0)
+
+    def insert_many(self, docs, ordered=False):
+        self.insert_many_calls.append((list(docs), ordered))
+        if self._insert_many_error is not None:
+            raise self._insert_many_error
+        return FakeInsertManyResult([None] * len(docs))
 
 
 class FakeAdmin:
@@ -253,3 +272,153 @@ def test_airport_collection_uses_dedicated_client_when_mongo_uri(monkeypatch):
 
     assert created["uri"] == "mongodb://other:27017/x"
     assert col is created["client"].db["airports"]
+
+
+# ===================================================================
+# Writers de las fuentes complementarias: METAR / holidays / EUROCONTROL / NOTAM
+# ===================================================================
+
+
+def _assert_inserted_with_ingested_at(writer, fake, docs):
+    n = writer(docs)
+    assert n == len(docs)
+    assert len(fake.insert_many_calls) == 1
+    inserted, ordered = fake.insert_many_calls[0]
+    assert ordered is False
+    assert len(inserted) == len(docs)
+    for doc in inserted:
+        assert doc["ingested_at"] is not None
+
+
+def test_write_metar_inserts_docs_with_ingested_at(monkeypatch):
+    fake = FakeCollection("metar")
+    monkeypatch.setattr(storage_silver, "_get_metar_collection", lambda: fake)
+
+    _assert_inserted_with_ingested_at(storage_silver.write_metar, fake, [
+        {"icao_id": "LEMD", "raw_ob": "LEMD 010900Z"},
+        {"icao_id": "LEBL", "raw_ob": "LEBL 010900Z"},
+    ])
+
+
+def test_write_holidays_inserts_docs_with_ingested_at(monkeypatch):
+    fake = FakeCollection("holidays")
+    monkeypatch.setattr(storage_silver, "_get_holidays_collection", lambda: fake)
+
+    _assert_inserted_with_ingested_at(storage_silver.write_holidays, fake, [
+        {"date": "2026-01-01", "name": "Año Nuevo", "source": "nager_date"},
+    ])
+
+
+def test_write_eurocontrol_pru_inserts_docs_with_ingested_at(monkeypatch):
+    fake = FakeCollection("eurocontrol_pru")
+    monkeypatch.setattr(storage_silver, "_get_eurocontrol_collection", lambda: fake)
+
+    _assert_inserted_with_ingested_at(storage_silver.write_eurocontrol_pru, fake, [
+        {"APT_ICAO": "LEMD", "source_file": "airport_traffic", "year": 2026},
+    ])
+
+
+def test_write_notam_inserts_docs_with_ingested_at(monkeypatch):
+    fake = FakeCollection("notam")
+    monkeypatch.setattr(storage_silver, "_get_notam_collection", lambda: fake)
+
+    _assert_inserted_with_ingested_at(storage_silver.write_notam, fake, [
+        {"feature": {"type": "Feature"}, "layer": 0, "snapshot_at": "2026-08-04T06:00:00Z"},
+    ])
+
+
+def test_write_new_sources_empty_returns_zero_without_touching_db(monkeypatch):
+    def fail_if_called(*a, **k):
+        raise AssertionError("con lista vacía no debe conectar a Mongo")
+
+    monkeypatch.setattr(storage_silver, "_get_metar_collection", fail_if_called)
+    monkeypatch.setattr(storage_silver, "_get_holidays_collection", fail_if_called)
+    monkeypatch.setattr(storage_silver, "_get_eurocontrol_collection", fail_if_called)
+    monkeypatch.setattr(storage_silver, "_get_notam_collection", fail_if_called)
+
+    assert storage_silver.write_metar([]) == 0
+    assert storage_silver.write_holidays([]) == 0
+    assert storage_silver.write_eurocontrol_pru([]) == 0
+    assert storage_silver.write_notam([]) == 0
+
+
+def test_write_metar_bulk_write_error_counts_inserted(monkeypatch):
+    fake = FakeCollection(
+        "metar", insert_many_error=FakeBulkWriteError({"insertedIds": ["a"]}),
+    )
+    monkeypatch.setattr(storage_silver, "_get_metar_collection", lambda: fake)
+
+    assert storage_silver.write_metar([{"icao_id": "LEMD"}]) == 1
+
+
+def test_write_metar_bulk_write_error_without_details_returns_zero(monkeypatch):
+    fake = FakeCollection("metar", insert_many_error=FakeBulkWriteError(None))
+    monkeypatch.setattr(storage_silver, "_get_metar_collection", lambda: fake)
+
+    assert storage_silver.write_metar([{"icao_id": "LEMD"}]) == 0
+
+
+def test_metar_collection_ensures_index(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(storage_silver, "_connect", lambda: None)
+    monkeypatch.setattr(storage_silver, "_client", client)
+    monkeypatch.setattr(storage_silver, "_metar_indexes_ensure", False)
+
+    col = storage_silver._get_metar_collection()
+    storage_silver._get_metar_collection()  # segunda llamada: no re-crea índice
+
+    assert col is client.db["metar"]
+    expected = [(
+        ([("icao_id", pymongo.ASCENDING), ("obs_time", pymongo.ASCENDING)],),
+        {},
+    )]
+    assert client.db["metar"].create_index_calls == expected
+
+
+def test_holidays_collection_ensures_index(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(storage_silver, "_connect", lambda: None)
+    monkeypatch.setattr(storage_silver, "_client", client)
+    monkeypatch.setattr(storage_silver, "_holidays_indexes_ensure", False)
+
+    col = storage_silver._get_holidays_collection()
+
+    assert col is client.db["holidays"]
+    expected = [(
+        ([("date", pymongo.ASCENDING), ("name", pymongo.ASCENDING),
+          ("source", pymongo.ASCENDING)],),
+        {},
+    )]
+    assert client.db["holidays"].create_index_calls == expected
+
+
+def test_eurocontrol_collection_ensures_index(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(storage_silver, "_connect", lambda: None)
+    monkeypatch.setattr(storage_silver, "_client", client)
+    monkeypatch.setattr(storage_silver, "_eurocontrol_indexes_ensure", False)
+
+    col = storage_silver._get_eurocontrol_collection()
+
+    assert col is client.db["eurocontrol_pru"]
+    expected = [(
+        ([("source_file", pymongo.ASCENDING), ("year", pymongo.ASCENDING)],),
+        {},
+    )]
+    assert client.db["eurocontrol_pru"].create_index_calls == expected
+
+
+def test_notam_collection_ensures_index(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(storage_silver, "_connect", lambda: None)
+    monkeypatch.setattr(storage_silver, "_client", client)
+    monkeypatch.setattr(storage_silver, "_notam_indexes_ensure", False)
+
+    col = storage_silver._get_notam_collection()
+
+    assert col is client.db["notam"]
+    expected = [(
+        ([("snapshot_at", pymongo.ASCENDING), ("layer", pymongo.ASCENDING)],),
+        {},
+    )]
+    assert client.db["notam"].create_index_calls == expected
