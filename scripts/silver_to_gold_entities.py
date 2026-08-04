@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Script 4/5: Sync entity tables from MongoDB (Silver) → PostgreSQL (Gold).
 
-Copies the ``flights``, ``aircraft``, ``weather`` and ``aena_infovuelos``
-collections from MongoDB into ``gold.flights``, ``gold.aircraft``,
-``gold.weather`` and ``gold.aena_infovuelos`` in PostgreSQL.
+Copies the ``flights``, ``aircraft``, ``weather``, ``aena_infovuelos``,
+``metar``, ``holidays``, ``eurocontrol_pru``, ``notam``, ``airports`` and
+``runways`` collections from MongoDB into ``gold.*`` tables in PostgreSQL.
 
 Usage:
     python scripts/silver_to_gold_entities.py [--dry-run]
@@ -31,7 +31,13 @@ from aeropredict.opensky.storage_gold import (
 from aeropredict.opensky.storage_gold import (
     write_aena_infovuelos_gold,
     write_aircraft_gold,
+    write_airports_gold,
+    write_eurocontrol_pru_gold,
     write_flights_gold_raw,
+    write_holidays_gold,
+    write_metar_gold,
+    write_notam_gold,
+    write_runways_gold,
     write_weather_gold,
 )
 
@@ -121,6 +127,78 @@ AENA_FIELDS = {
     "_id": 1,
 }
 
+# Campos relevantes de metar en MongoDB
+METAR_FIELDS = {
+    "icao_id": 1,
+    "raw_ob": 1,
+    "receipt_time": 1,
+    "obs_time": 1,
+    "temp": 1,
+    "dewp": 1,
+    "wdir": 1,
+    "wspd": 1,
+    "wgst": 1,
+    "visib": 1,
+    "altim": 1,
+    "flt_cat": 1,
+    "clouds_base": 1,
+    "_id": 0,
+}
+
+# Campos relevantes de holidays en MongoDB
+HOLIDAYS_FIELDS = {
+    "date": 1,
+    "name": 1,
+    "local_name": 1,
+    "country_code": 1,
+    "is_global": 1,
+    "counties": 1,
+    "types": 1,
+    "source": 1,
+    "subdivision": 1,
+    "_id": 0,
+}
+
+# Campos relevantes de eurocontrol_pru en MongoDB (columnas dinámicas)
+EUROCONTROL_FIELDS = None
+
+# Campos relevantes de notam en MongoDB
+NOTAM_FIELDS = {
+    "feature": 1,
+    "layer": 1,
+    "snapshot_at": 1,
+    "_id": 0,
+}
+
+# Campos relevantes de airports en MongoDB
+AIRPORTS_FIELDS = {
+    "ident": 1,
+    "type": 1,
+    "name": 1,
+    "latitude_deg": 1,
+    "longitude_deg": 1,
+    "elevation_ft": 1,
+    "iso_country": 1,
+    "iso_region": 1,
+    "municipality": 1,
+    "iata_code": 1,
+    "icao_code": 1,
+    "_id": 0,
+}
+
+# Campos relevantes de runways en MongoDB
+RUNWAYS_FIELDS = {
+    "airport_ident": 1,
+    "length_ft": 1,
+    "width_ft": 1,
+    "surface": 1,
+    "le_ident": 1,
+    "he_ident": 1,
+    "le_heading_degT": 1,
+    "he_heading_degT": 1,
+    "_id": 0,
+}
+
 
 def _stats() -> dict[str, int]:
     """Cuenta documentos en MongoDB y PostgreSQL."""
@@ -130,7 +208,18 @@ def _stats() -> dict[str, int]:
 
     stats: dict[str, int] = {}
 
-    for col in ("flights", "aircraft", "weather", "aena_infovuelos"):
+    for col in (
+        "flights",
+        "aircraft",
+        "weather",
+        "aena_infovuelos",
+        "metar",
+        "holidays",
+        "eurocontrol_pru",
+        "notam",
+        "airports",
+        "runways",
+    ):
         stats[f"mongo_{col}"] = mdb[col].count_documents({})
         with pg.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM gold.{col}")
@@ -143,7 +232,7 @@ def _stats() -> dict[str, int]:
 def _sync_entity(
     mdb: Any,
     collection: str,
-    fields: dict[str, int],
+    fields: dict[str, int] | None,
     write_fn: Any,
     checkpoint_name: str,
 ) -> int:
@@ -152,8 +241,14 @@ def _sync_entity(
     Siempre sincroniza (las funciones write usan ON CONFLICT / upsert,
     por lo que es seguro re-ejecutar). El checkpoint se usa solo como
     registro histórico, no para saltarse la sincronización.
+
+    Si ``fields`` es None se leen todos los campos del documento
+    (colecciones de esquema dinámico como eurocontrol_pru).
     """
-    docs = list(mdb[collection].find({}, fields))
+    if fields is None:
+        docs = list(mdb[collection].find({}))
+    else:
+        docs = list(mdb[collection].find({}, fields))
     logger.info("  %s: %d documentos", collection, len(docs))
     if docs:
         n = write_fn(docs)
@@ -227,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("=" * 60)
     logger.info(
-        "Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather, aena_infovuelos)"
+        "Script 4/5: Entity sync: MongoDB → Gold (flights, aircraft, weather, "
+        "aena_infovuelos, metar, holidays, eurocontrol_pru, notam, airports, runways)"
     )
     logger.info("=" * 60)
 
@@ -300,6 +396,18 @@ def main(argv: list[str] | None = None) -> int:
         write_aena_infovuelos_gold,
         "aena_infovuelos_cursor",
     )
+    _sync_entity(mdb, "metar", METAR_FIELDS, write_metar_gold, "metar")
+    _sync_entity(mdb, "holidays", HOLIDAYS_FIELDS, write_holidays_gold, "holidays")
+    _sync_entity(
+        mdb,
+        "eurocontrol_pru",
+        EUROCONTROL_FIELDS,
+        write_eurocontrol_pru_gold,
+        "eurocontrol_pru",
+    )
+    _sync_entity(mdb, "notam", NOTAM_FIELDS, write_notam_gold, "notam")
+    _sync_entity(mdb, "airports", AIRPORTS_FIELDS, write_airports_gold, "airports")
+    _sync_entity(mdb, "runways", RUNWAYS_FIELDS, write_runways_gold, "runways")
 
     mongo.close()
 
@@ -313,6 +421,30 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(
         "  aena:     MongoDB=%d  Gold=%d",
         stats["mongo_aena_infovuelos"], stats["gold_aena_infovuelos"],
+    )
+    logger.info(
+        "  metar:    MongoDB=%d  Gold=%d",
+        stats["mongo_metar"], stats["gold_metar"],
+    )
+    logger.info(
+        "  holidays: MongoDB=%d  Gold=%d",
+        stats["mongo_holidays"], stats["gold_holidays"],
+    )
+    logger.info(
+        "  eurocontrol_pru: MongoDB=%d  Gold=%d",
+        stats["mongo_eurocontrol_pru"], stats["gold_eurocontrol_pru"],
+    )
+    logger.info(
+        "  notam:    MongoDB=%d  Gold=%d",
+        stats["mongo_notam"], stats["gold_notam"],
+    )
+    logger.info(
+        "  airports: MongoDB=%d  Gold=%d",
+        stats["mongo_airports"], stats["gold_airports"],
+    )
+    logger.info(
+        "  runways:  MongoDB=%d  Gold=%d",
+        stats["mongo_runways"], stats["gold_runways"],
     )
     logger.info("=" * 60)
 

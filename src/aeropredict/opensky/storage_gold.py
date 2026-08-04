@@ -18,6 +18,30 @@ Tablas entidad (raw desde MongoDB):
         Vuelos infovuelos de AENA por aeropuerto y snapshot.
         Se sincroniza desde la colección ``aena_infovuelos`` de MongoDB.
 
+    ``metar``
+        Informes METAR (NOAA AWC) por aeropuerto.
+        Se sincroniza desde la colección ``metar`` de MongoDB.
+
+    ``holidays``
+        Festivos de España (Nager.Date + python-holidays).
+        Se sincroniza desde la colección ``holidays`` de MongoDB.
+
+    ``eurocontrol_pru``
+        Filas CSV de EUROCONTROL PRU (cada fila como JSONB).
+        Se sincroniza desde la colección ``eurocontrol_pru`` de MongoDB.
+
+    ``notam``
+        Features NOTAM de ENAIRE servAIS (GeoJSON como JSONB).
+        Se sincroniza desde la colección ``notam`` de MongoDB.
+
+    ``airports``
+        Aeropuertos de OurAirports (maestra).
+        Se sincroniza desde la colección ``airports`` de MongoDB.
+
+    ``runways``
+        Pistas de OurAirports (maestra).
+        Se sincroniza desde la colección ``runways`` de MongoDB.
+
 Tablas agregadas (desde flights):
     ``daily_airport_traffic``
         Vuelos por aeropuerto y día (arrivals / departures).
@@ -34,6 +58,7 @@ Tablas agregadas (desde flights):
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -205,6 +230,98 @@ CREATE TABLE IF NOT EXISTS gold.aena_infovuelos (
 
 CREATE INDEX IF NOT EXISTS idx_aena_infovuelos_airport_date
     ON gold.aena_infovuelos (aena_airport_iata, snapshot_at_utc);
+
+CREATE TABLE IF NOT EXISTS gold.metar (
+    icao_id        VARCHAR(8) NOT NULL,
+    raw_ob         TEXT,
+    receipt_time   TIMESTAMPTZ,
+    obs_time       BIGINT NOT NULL,
+    temp           FLOAT,
+    dewp           FLOAT,
+    wdir           INTEGER,
+    wspd           INTEGER,
+    wgst           INTEGER,
+    visib          VARCHAR(16),
+    altim          FLOAT,
+    flt_cat        VARCHAR(8),
+    clouds_base    INTEGER,
+    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (icao_id, obs_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_metar_icao_obs ON gold.metar (icao_id, obs_time);
+
+CREATE TABLE IF NOT EXISTS gold.holidays (
+    id            SERIAL PRIMARY KEY,
+    date          DATE NOT NULL,
+    name          VARCHAR(200) NOT NULL,
+    local_name    VARCHAR(200) NOT NULL DEFAULT '',
+    country_code  VARCHAR(8) NOT NULL,
+    is_global     BOOLEAN,
+    counties      TEXT[],
+    types         TEXT[],
+    source        VARCHAR(32) NOT NULL,
+    subdivision   VARCHAR(16) NOT NULL DEFAULT '',
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (date, name, country_code, source, subdivision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_holidays_date_source ON gold.holidays (date, source);
+
+CREATE TABLE IF NOT EXISTS gold.eurocontrol_pru (
+    id            SERIAL PRIMARY KEY,
+    source_file   VARCHAR(64) NOT NULL,
+    year          INTEGER NOT NULL,
+    row_json      JSONB NOT NULL,
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source_file, year, row_json)
+);
+
+CREATE INDEX IF NOT EXISTS idx_eurocontrol_file_year
+    ON gold.eurocontrol_pru (source_file, year);
+
+CREATE TABLE IF NOT EXISTS gold.notam (
+    id            SERIAL PRIMARY KEY,
+    layer         INTEGER NOT NULL,
+    snapshot_at   TIMESTAMPTZ,
+    feature_json  JSONB NOT NULL,
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (layer, feature_json)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notam_snapshot_layer ON gold.notam (snapshot_at, layer);
+
+CREATE TABLE IF NOT EXISTS gold.airports (
+    ident          VARCHAR(8) PRIMARY KEY,
+    type           VARCHAR(32),
+    name           VARCHAR(200),
+    latitude_deg   FLOAT,
+    longitude_deg  FLOAT,
+    elevation_ft   FLOAT,
+    iso_country    VARCHAR(8),
+    iso_region     VARCHAR(16),
+    municipality   VARCHAR(100),
+    iata_code      VARCHAR(8),
+    icao_code      VARCHAR(8),
+    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_airports_iso_country ON gold.airports (iso_country);
+
+CREATE TABLE IF NOT EXISTS gold.runways (
+    airport_ident  VARCHAR(8) NOT NULL,
+    length_ft      FLOAT,
+    width_ft       FLOAT,
+    surface        VARCHAR(32),
+    le_ident       VARCHAR(8) NOT NULL,
+    he_ident       VARCHAR(8) NOT NULL,
+    le_heading_degT FLOAT,
+    he_heading_degT FLOAT,
+    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (airport_ident, le_ident, he_ident)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runways_surface ON gold.runways (surface);
 """
 
 
@@ -457,6 +574,38 @@ def _trunc(val: Any, maxlen: int) -> str | None:
     return s[:maxlen] if s else None
 
 
+def _safe_float(val: Any) -> float | None:
+    """Convierte a float, o None si el valor no es convertible."""
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(val: Any) -> int | None:
+    """Convierte a int, o None si el valor no es convertible."""
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_iso_timestamp(raw: Any) -> datetime | None:
+    """Parsea un string ISO 8601 a datetime, o None si no es válido."""
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def write_aircraft_gold(aircraft_list: list[dict[str, Any]]) -> int:
     """Upsert de aeronaves en gold.aircraft (batch via execute_values).
 
@@ -652,6 +801,386 @@ def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
         )
     conn.commit()
     logger.info("Gold AENA infovuelos: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+# ===================================================================
+# Gold — nuevas fuentes (sync desde MongoDB)
+# metar, holidays, eurocontrol_pru, notam, airports, runways
+# ===================================================================
+
+
+def write_metar_gold(metar_reports: list[dict[str, Any]]) -> int:
+    """Inserta informes METAR en gold.metar.
+
+    Se omite filas sin ``icao_id`` o ``obs_time``.
+
+    Args:
+        metar_reports: Lista de dicts desde MongoDB (colección metar).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not metar_reports:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in metar_reports:
+        icao_id = _trunc(doc.get("icao_id"), 8)
+        obs_time = _safe_int(doc.get("obs_time"))
+        if not icao_id or obs_time is None:
+            n_skipped += 1
+            continue
+        rows.append((
+            icao_id,
+            doc.get("raw_ob"),
+            _parse_iso_timestamp(doc.get("receipt_time")),
+            obs_time,
+            _safe_float(doc.get("temp")),
+            _safe_float(doc.get("dewp")),
+            _safe_int(doc.get("wdir")),
+            _safe_int(doc.get("wspd")),
+            _safe_int(doc.get("wgst")),
+            _trunc(doc.get("visib"), 16),
+            _safe_float(doc.get("altim")),
+            _trunc(doc.get("flt_cat"), 8),
+            _safe_int(doc.get("clouds_base")),
+        ))
+
+    if n_skipped:
+        logger.warning(
+            "Skipped %d METAR rows missing icao_id or obs_time",
+            n_skipped,
+        )
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.metar
+            (icao_id, raw_ob, receipt_time, obs_time,
+             temp, dewp, wdir, wspd, wgst, visib, altim, flt_cat, clouds_base)
+            VALUES %s
+            ON CONFLICT (icao_id, obs_time) DO NOTHING
+            """,
+            rows,
+            template=(
+                "(%s, %s, %s::timestamptz, %s,"
+                " %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            ),
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold metar: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+def write_holidays_gold(holidays: list[dict[str, Any]]) -> int:
+    """Inserta festivos de España en gold.holidays.
+
+    Se omite filas sin los campos obligatorios (date, name, country_code,
+    source) ya que las columnas son NOT NULL.
+
+    Args:
+        holidays: Lista de dicts desde MongoDB (colección holidays).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not holidays:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in holidays:
+        date = str(doc.get("date"))[:10] if doc.get("date") else None
+        name = _trunc(doc.get("name"), 200)
+        country_code = _trunc(doc.get("country_code"), 8)
+        source = _trunc(doc.get("source"), 32)
+        if not date or not name or not country_code or not source:
+            n_skipped += 1
+            continue
+        rows.append((
+            date,
+            name,
+            _trunc(doc.get("local_name"), 200) or "",
+            country_code,
+            doc.get("is_global"),
+            doc.get("counties") or [],
+            doc.get("types") or [],
+            source,
+            _trunc(doc.get("subdivision"), 16) or "",
+        ))
+
+    if n_skipped:
+        logger.warning(
+            "Skipped %d holidays rows missing date, name, country_code or source",
+            n_skipped,
+        )
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.holidays
+            (date, name, local_name, country_code, is_global,
+             counties, types, source, subdivision)
+            VALUES %s
+            ON CONFLICT (date, name, country_code, source, subdivision) DO NOTHING
+            """,
+            rows,
+            template="(%s::date, %s, %s, %s, %s, %s::text[], %s::text[], %s, %s)",
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold holidays: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+def write_eurocontrol_pru_gold(rows_in: list[dict[str, Any]]) -> int:
+    """Inserta filas CSV de EUROCONTROL PRU en gold.eurocontrol_pru.
+
+    Cada documento (de columnas dinámicas) se serializa como JSONB.
+    Se omite filas sin ``source_file`` o ``year``.
+
+    Args:
+        rows_in: Lista de dicts desde MongoDB (colección eurocontrol_pru).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not rows_in:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in rows_in:
+        source_file = _trunc(doc.get("source_file"), 64)
+        year = _safe_int(doc.get("year"))
+        if not source_file or year is None:
+            n_skipped += 1
+            continue
+        row_json = json.dumps(
+            {
+                k: v
+                for k, v in doc.items()
+                if k not in ("_id", "source_file", "year", "ingested_at")
+            },
+            sort_keys=True,
+            default=str,
+        )
+        rows.append((source_file, year, row_json))
+
+    if n_skipped:
+        logger.warning(
+            "Skipped %d EUROCONTROL PRU rows missing source_file or year",
+            n_skipped,
+        )
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.eurocontrol_pru
+            (source_file, year, row_json)
+            VALUES %s
+            ON CONFLICT (source_file, year, row_json) DO NOTHING
+            """,
+            rows,
+            template="(%s, %s, %s::jsonb)",
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold eurocontrol_pru: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+def write_notam_gold(features: list[dict[str, Any]]) -> int:
+    """Inserta features NOTAM en gold.notam.
+
+    El documento GeoJSON se serializa como JSONB. Se omite filas sin
+    ``feature`` o ``layer``.
+
+    Args:
+        features: Lista de dicts desde MongoDB (colección notam).
+
+    Returns:
+        Número de filas insertadas.
+    """
+    if not features:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in features:
+        feature = doc.get("feature")
+        layer = _safe_int(doc.get("layer"))
+        if not feature or layer is None:
+            n_skipped += 1
+            continue
+        feature_json = json.dumps(feature, sort_keys=True, default=str)
+        rows.append((
+            layer,
+            _parse_iso_timestamp(doc.get("snapshot_at")),
+            feature_json,
+        ))
+
+    if n_skipped:
+        logger.warning("Skipped %d NOTAM rows missing feature or layer", n_skipped)
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.notam
+            (layer, snapshot_at, feature_json)
+            VALUES %s
+            ON CONFLICT (layer, feature_json) DO NOTHING
+            """,
+            rows,
+            template="(%s, %s::timestamptz, %s::jsonb)",
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold notam: %d filas insertadas", len(rows))
+    return len(rows)
+
+
+def write_airports_gold(airports: list[dict[str, Any]]) -> int:
+    """Upsert de aeropuertos en gold.airports (batch via execute_values).
+
+    Los valores llegan como string desde el parser de OurAirports, por lo
+    que las columnas numéricas se convierten con float() defensivo.
+    Se omite filas sin ``ident``.
+
+    Args:
+        airports: Lista de dicts desde MongoDB (colección airports).
+
+    Returns:
+        Número de filas insertadas/actualizadas.
+    """
+    if not airports:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in airports:
+        ident = _trunc(doc.get("ident"), 8)
+        if not ident:
+            n_skipped += 1
+            continue
+        rows.append((
+            ident,
+            _trunc(doc.get("type"), 32),
+            _trunc(doc.get("name"), 200),
+            _safe_float(doc.get("latitude_deg")),
+            _safe_float(doc.get("longitude_deg")),
+            _safe_float(doc.get("elevation_ft")),
+            _trunc(doc.get("iso_country"), 8),
+            _trunc(doc.get("iso_region"), 16),
+            _trunc(doc.get("municipality"), 100),
+            _trunc(doc.get("iata_code"), 8),
+            _trunc(doc.get("icao_code"), 8),
+        ))
+
+    if n_skipped:
+        logger.warning("Skipped %d airports rows missing ident", n_skipped)
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.airports
+            (ident, type, name, latitude_deg, longitude_deg, elevation_ft,
+             iso_country, iso_region, municipality, iata_code, icao_code)
+            VALUES %s
+            ON CONFLICT (ident) DO UPDATE SET
+                type           = EXCLUDED.type,
+                name           = EXCLUDED.name,
+                latitude_deg   = EXCLUDED.latitude_deg,
+                longitude_deg  = EXCLUDED.longitude_deg,
+                elevation_ft   = EXCLUDED.elevation_ft,
+                iso_country    = EXCLUDED.iso_country,
+                iso_region     = EXCLUDED.iso_region,
+                municipality   = EXCLUDED.municipality,
+                iata_code      = EXCLUDED.iata_code,
+                icao_code      = EXCLUDED.icao_code,
+                ingested_at    = NOW()
+            """,
+            rows,
+            template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold airports: %d upsertados", len(rows))
+    return len(rows)
+
+
+def write_runways_gold(runways: list[dict[str, Any]]) -> int:
+    """Upsert de pistas en gold.runways (batch via execute_values).
+
+    Los valores llegan como string desde el parser de OurAirports, por lo
+    que las columnas numéricas se convierten con float() defensivo.
+    Se omite filas sin ``airport_ident``, ``le_ident`` o ``he_ident``.
+
+    Args:
+        runways: Lista de dicts desde MongoDB (colección runways).
+
+    Returns:
+        Número de filas insertadas/actualizadas.
+    """
+    if not runways:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    n_skipped = 0
+    for doc in runways:
+        airport_ident = _trunc(doc.get("airport_ident"), 8)
+        le_ident = _trunc(doc.get("le_ident"), 8)
+        he_ident = _trunc(doc.get("he_ident"), 8)
+        if not airport_ident or not le_ident or not he_ident:
+            n_skipped += 1
+            continue
+        rows.append((
+            airport_ident,
+            _safe_float(doc.get("length_ft")),
+            _safe_float(doc.get("width_ft")),
+            _trunc(doc.get("surface"), 32),
+            le_ident,
+            he_ident,
+            _safe_float(doc.get("le_heading_degT")),
+            _safe_float(doc.get("he_heading_degT")),
+        ))
+
+    if n_skipped:
+        logger.warning(
+            "Skipped %d runways rows missing airport_ident, le_ident or he_ident",
+            n_skipped,
+        )
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """INSERT INTO gold.runways
+            (airport_ident, length_ft, width_ft, surface,
+             le_ident, he_ident, le_heading_degT, he_heading_degT)
+            VALUES %s
+            ON CONFLICT (airport_ident, le_ident, he_ident) DO UPDATE SET
+                length_ft      = EXCLUDED.length_ft,
+                width_ft       = EXCLUDED.width_ft,
+                surface        = EXCLUDED.surface,
+                le_heading_degT = EXCLUDED.le_heading_degT,
+                he_heading_degT = EXCLUDED.he_heading_degT,
+                ingested_at    = NOW()
+            """,
+            rows,
+            template="(%s, %s, %s, %s, %s, %s, %s, %s)",
+            page_size=500,
+        )
+    conn.commit()
+    logger.info("Gold runways: %d upsertados", len(rows))
     return len(rows)
 
 
