@@ -10,9 +10,9 @@
 
 ```
 extract_opensky_to_bronze.py  → Delta Lake bronze/opensky
-bronze_to_silver.py   → MongoDB collection flights
+bronze_to_silver.py   → MongoDB collections flights, weather, aena_infovuelos, metar, holidays, eurocontrol_pru, notam
 silver_to_gold.py     → PostgreSQL gold.{daily_airport_traffic,route_density,hourly_distribution}
-silver_to_gold_entities.py → PostgreSQL gold.{flights,aircraft,weather,aena_infovuelos}
+silver_to_gold_entities.py → PostgreSQL gold.{flights,aircraft,weather,aena_infovuelos,metar,holidays,eurocontrol_pru,notam,airports,runways}
 build_feature_store.py→ PostgreSQL gold.feature_store (ML features)
 ```
 
@@ -20,12 +20,12 @@ build_feature_store.py→ PostgreSQL gold.feature_store (ML features)
 
 **AENA hourly**: `collect_aena_infovuelos.py` runs hourly (separate workflow, cron minute 7 UTC) → Bronze `bronze/aena_infovuelos`. `bronze_to_silver.py` also promotes AENA Bronze → Silver using per-hour checkpoints (`checkpoints_bronze_to_silver_aena`), distinct from the OpenSky date checkpoint.
 
-**Data collectors**: the 5 keyless collectors run inside the `extract` job of `.github/workflows/pipeline.yml` (06:30/19:30 UTC) with `continue-on-error: true` (failure isolation); OpenSky is critical (no `continue-on-error`) and Open-Meteo weather also uses `continue-on-error` → Bronze:
-- `collect_metar.py` → `bronze/metar_awc` (NOAA AWC)
-- `collect_holidays.py` → `bronze/holidays_nager_date` + `bronze/holidays_python` (Nager.Date + python-holidays)
-- `collect_eurocontrol.py` → `bronze/eurocontrol_pru` (EUROCONTROL PRU, `--year`)
-- `collect_ourairports.py` → `bronze/ourairports_airports` + `bronze/ourairports_runways` (OurAirports) + Mongo `airports`/`runways`
-- `collect_notam.py` → `bronze/notam_enaire` (ENAIRE servAIS; 401/403 → graceful exit 0 + warning)
+**Data collectors**: the 5 keyless collectors run inside the `extract` job of `.github/workflows/pipeline.yml` (06:30/19:30 UTC) with `continue-on-error: true` (failure isolation); OpenSky is critical (no `continue-on-error`) and Open-Meteo weather also uses `continue-on-error`. Their data now flows Bronze → Silver (MongoDB) → Gold (PostgreSQL): `bronze_to_silver.py` promotes each Bronze table to Mongo (per-source checkpoints), `silver_to_gold_entities.py` syncs the collections to Gold (full sync, upsert/`ON CONFLICT`):
+- `collect_metar.py` → `bronze/metar_awc` → Mongo `metar` → `gold.metar` (NOAA AWC)
+- `collect_holidays.py` → `bronze/holidays_nager_date` + `bronze/holidays_python` → Mongo `holidays` → `gold.holidays` (Nager.Date + python-holidays; docs tagged `nager_date`/`python_holidays`)
+- `collect_eurocontrol.py` → `bronze/eurocontrol_pru` → Mongo `eurocontrol_pru` → `gold.eurocontrol_pru` (EUROCONTROL PRU, `--year`; syncs with no field projection)
+- `collect_ourairports.py` → `bronze/ourairports_airports` + `bronze/ourairports_runways` + Mongo `airports`/`runways` (dual-write at collect time) → `gold.airports`/`gold.runways` (OurAirports)
+- `collect_notam.py` → `bronze/notam_enaire` → Mongo `notam` → `gold.notam` (ENAIRE servAIS; 401/403 → graceful exit 0 + warning)
 
 All tables are registered in `TABLES_TO_SYNC` (`scripts/sync_r2_to_local.py`). `.github/workflows/data-collectors.yml` (cron daily 06:00 UTC, own `concurrency` group `data-collectors`) is now lint-test only: it runs `pytest tests/` + `ruff check scripts/ src/ tests/` (job `lint-test`) — the only CI job that runs the test suite.
 

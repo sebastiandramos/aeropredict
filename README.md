@@ -18,7 +18,7 @@ collect_eurocontrol.py       → Bronze (R2) — EUROCONTROL PRU (CSV anual)
 collect_ourairports.py       → Bronze (R2) — OurAirports (airports + runways)
 collect_notam.py             → Bronze (R2) — NOTAM (ENAIRE servAIS)
   ↓
-bronze_to_silver.py → Silver (MongoDB Atlas) — flights + weather + aena_infovuelos
+bronze_to_silver.py → Silver (MongoDB Atlas) — flights, weather, aena_infovuelos, metar, holidays, eurocontrol_pru, notam
   ↓
 silver_to_gold.py          → Gold (PostgreSQL — Neon) — agregaciones de vuelos
 silver_to_gold_entities.py → Gold (PostgreSQL — Neon) — tablas entidad raw
@@ -27,22 +27,27 @@ build_feature_store.py     → Gold (PostgreSQL — Neon) — feature store
 
 ### Colectores de datos complementarios (job `extract` de `pipeline.yml`)
 
-Fuentes sin API key, escritura directa a Bronze (R2). Corren en el job `extract` de
-`pipeline.yml` (06:30/19:30 UTC) con `continue-on-error: true` (aislamiento de
-fallos: una fuente caída no bloquea al resto). El workflow `data-collectors.yml`
-ahora solo corre `lint-test` (`pytest tests/` + `ruff check`) cada día a las
-06:00 UTC:
+Fuentes sin API key. Escriben a Bronze (R2) y su flujo continúa hasta Gold:
+`bronze_to_silver.py` promueve cada Bronze a Silver (MongoDB) y
+`silver_to_gold_entities.py` sincroniza las colecciones a tablas Gold
+(PostgreSQL). Corren en el job `extract` de `pipeline.yml` (06:30/19:30 UTC)
+con `continue-on-error: true` (aislamiento de fallos: una fuente caída no
+bloquea al resto). El workflow `data-collectors.yml` ahora solo corre
+`lint-test` (`pytest tests/` + `ruff check`) cada día a las 06:00 UTC:
 
-| Script | Bronze table(s) | Fuente |
-|---|---|---|
-| `scripts/collect_metar.py` | `bronze/metar_awc` | NOAA Aviation Weather Center |
-| `scripts/collect_holidays.py` | `bronze/holidays_nager_date`, `bronze/holidays_python` | Nager.Date + python-holidays |
-| `scripts/collect_eurocontrol.py` | `bronze/eurocontrol_pru` | EUROCONTROL PRU (CSV anual, `--year`) |
-| `scripts/collect_ourairports.py` | `bronze/ourairports_airports`, `bronze/ourairports_runways` | OurAirports (Unlicense) |
-| `scripts/collect_notam.py` | `bronze/notam_enaire` | ENAIRE servAIS (ArcGIS FeatureServer) |
+| Script | Bronze table(s) | Colección MongoDB (Silver) | Tabla Gold | Fuente |
+|---|---|---|---|---|
+| `scripts/collect_metar.py` | `bronze/metar_awc` | `metar` | `gold.metar` | NOAA Aviation Weather Center |
+| `scripts/collect_holidays.py` | `bronze/holidays_nager_date`, `bronze/holidays_python` | `holidays` | `gold.holidays` | Nager.Date + python-holidays |
+| `scripts/collect_eurocontrol.py` | `bronze/eurocontrol_pru` | `eurocontrol_pru` | `gold.eurocontrol_pru` | EUROCONTROL PRU (CSV anual, `--year`) |
+| `scripts/collect_ourairports.py` | `bronze/ourairports_airports`, `bronze/ourairports_runways` | `airports`, `runways` (dual-write al recoger) | `gold.airports`, `gold.runways` | OurAirports (Unlicense) |
+| `scripts/collect_notam.py` | `bronze/notam_enaire` | `notam` | `gold.notam` | ENAIRE servAIS (ArcGIS FeatureServer) |
 
 Todas las tablas soportan `--dry-run`, no requieren claves y están registradas en
 `TABLES_TO_SYNC` de `scripts/sync_r2_to_local.py` (incluida `bronze/aena_infovuelos`).
+`collect_ourairports.py` además hace dual-write al recoger: escribe directamente
+las colecciones MongoDB `airports`/`runways`, que `bronze_to_silver.py` no
+promueve porque ya están en Silver.
 
 ### Flujo mock (desarrollo local, sin OpenSky API)
 
@@ -87,7 +92,7 @@ Parámetros:
 
 #### 2. Bronze → Silver (MongoDB)
 
-Lee los datos de Bronze y los inserta en MongoDB (colecciones `flights`, `weather` y `aena_infovuelos`; esta última se promueve por horas, con checkpoint independiente).
+Lee los datos de Bronze y los inserta en MongoDB: siete colecciones (`flights`, `weather`, `aena_infovuelos`, `metar`, `holidays`, `eurocontrol_pru` y `notam`). Cada fuente usa su propio checkpoint en `checkpoints_*`: `flights` por día, `aena_infovuelos` y `metar` por hora, `holidays` por `{source}_{year}`, `eurocontrol_pru` por `{filename}_{year}` y `notam` por `snapshot_at`.
 
 ```bash
 # Fecha concreta
@@ -112,7 +117,7 @@ python scripts/bronze_to_silver.py --date 2025-01-15 --dry-run
 
 #### 3. Silver → Gold entidades (PostgreSQL)
 
-Lee las 4 colecciones de MongoDB y las escribe en tablas Gold en PostgreSQL.
+Lee las 10 colecciones de MongoDB y las escribe en tablas Gold en PostgreSQL (sincronización completa; las escrituras usan upsert / `ON CONFLICT`, seguras de re-ejecutar).
 
 ```bash
 # Sincronizar todo
@@ -130,6 +135,12 @@ python scripts/silver_to_gold_entities.py --dry-run
 | `aircraft` | `gold.aircraft` | Maestra | `icao24` |
 | `weather` | `gold.weather` | Horaria | `SERIAL` + índice `(airport_code, flight_date)` |
 | `aena_infovuelos` | `gold.aena_infovuelos` | Horaria | `SERIAL` + UNIQUE `(snapshot_at_utc, flight_number, aena_airport_iata, flight_type)` |
+| `metar` | `gold.metar` | Meteorológica (METAR) | `SERIAL` + UNIQUE `(icao_id, obs_time)` |
+| `holidays` | `gold.holidays` | Calendario | `SERIAL` + UNIQUE `(date, name, country_code, source, subdivision)` |
+| `eurocontrol_pru` | `gold.eurocontrol_pru` | Operacional (PRU) | `SERIAL` + UNIQUE `(source_file, year, row_json)` |
+| `notam` | `gold.notam` | NOTAM | `SERIAL` + UNIQUE `(layer, feature_json)` |
+| `airports` | `gold.airports` | Maestra | `ident` |
+| `runways` | `gold.runways` | Maestra | `(airport_ident, le_ident, he_ident)` |
 
 ### Pipeline completo mock (un solo comando)
 
