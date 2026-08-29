@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS gold.aena_infovuelos (
     checkin_to          VARCHAR(20),
     aircraft_type       VARCHAR(50),
     ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (snapshot_at_utc, flight_number, aena_airport_iata, flight_type)
+    UNIQUE (snapshot_at_utc, flight_number, aena_airport_iata, flight_type, scheduled_local)
 );
 
 CREATE INDEX IF NOT EXISTS idx_aena_infovuelos_airport_date
@@ -783,7 +783,10 @@ def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
              status, terminal, gate_first, gate_second,
              checkin_from, checkin_to, aircraft_type)
             VALUES %s
-            ON CONFLICT (snapshot_at_utc, flight_number, aena_airport_iata, flight_type)
+            ON CONFLICT (
+                snapshot_at_utc, flight_number, aena_airport_iata,
+                flight_type, scheduled_local
+            )
             DO NOTHING
             """,
             rows,
