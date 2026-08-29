@@ -29,6 +29,14 @@ build_feature_store.py→ PostgreSQL gold.feature_store (ML features)
 
 All tables are registered in `TABLES_TO_SYNC` (`scripts/sync_r2_to_local.py`). `.github/workflows/data-collectors.yml` (cron daily 06:00 UTC, own `concurrency` group `data-collectors`) is now lint-test only: it runs `pytest tests/` + `ruff check scripts/ src/ tests/` (job `lint-test`) — the only CI job that runs the test suite.
 
+## Code architecture (add a new data source)
+
+- **`scripts/collect_*.py` are thin CLI wrappers** — each parses CLI flags, calls an adapter, and persists to Bronze via shared storage helpers (`aeropredict.opensky.storage`: `write_raw_csv`, `write_raw_snapshot`, `table_row_exists`). No HTTP/persistence logic lives in the script.
+- **`src/aeropredict/sources/` is the adapter layer** — one module per external source (`metar.py`, `holidays.py`, `eurocontrol.py`, `ourairports.py`, `notam_enaire.py`, `openmeteo.py`, `aviationstack.py`, `aerodatabox.py`, `nager.py`, `python_holidays.py`, `airport_codes.py`, `airport_coords.py`). New data sources go here.
+- **All adapters share `BaseAdapter` + `http_get_with_retry`/`http_post_with_retry`** from `src/aeropredict/sources/base.py` (exponential backoff + jitter, honors `Retry-After`, retries on 429/5xx/timeout/conn). Use these helpers — do not hand-roll `requests` calls. `NonJSONResponseError` (a 200-with-non-JSON body) is **intentionally NOT retried** (anti-bot/gateway page).
+- **Test pattern for collectors**: tests in `tests/test_collect_*.py` `importlib`-load the script module from `scripts/` and `monkeypatch` the adapter's HTTP layer (e.g. `aeropredict.sources.metar.http_get_with_retry`) with fixture JSON — no network, no DB, no real Delta. Follow this pattern for new collectors.
+- **A collector reaches Mint/R2 and then Silver/Gold automatically** once its Bronze table is registered in `TABLES_TO_SYNC` (`scripts/sync_r2_to_local.py`) and `bronze_to_silver.py` + `silver_to_gold_entities.py` are extended to promote/sync it (per-source checkpoint in `checkpoints_*`).
+
 ## Key Commands
 
 ```bash
@@ -66,7 +74,7 @@ docker compose up -d  # MongoDB :27017, PostgreSQL :5432
 ## Gotchas
 
 - **PTY on WSL**: `pty_spawn` runs Windows `bash.exe`, NOT WSL. Use `wsl.exe -e /path/to/script.sh` to run in WSL.
-- **Checkpoints in MongoDB**: pipeline uses `checkpoints_*` collections for idempotency. `silver_to_gold_entities.py` ignores checkpoint and always syncs (write functions use `ON CONFLICT`/upsert, safe to re-run). Use `--force` to reset checkpoints.
+- **Checkpoints in MongoDB**: `bronze_to_silver.py` uses per-source checkpoints (`checkpoints_*`, e.g. `checkpoints_bronze_to_silver_aena`) for idempotent promotion. `silver_to_gold_entities.py` uses a cursor checkpoint (collection `silver_to_gold_entities`) to resume reads, but writes are idempotent upserts/`ON CONFLICT` — safe to re-run for the whole set. Use `--force` to reset checkpoints.
 - **OpenSky API**: ClientPool rotates accounts on HTTP 429. 5s delay between requests. 60s cap on Retry-After. `MIN_CREDITS=0` (never blocks on low credits).
 - **Default bounding box**: Peninsular Spain + Balearics (`36.0,43.8,-9.3,4.3`). 42 Spanish airports + 12 European hubs in `AEROPUERTOS`.
 - **Delta Lake partitioning**: `bronze/opensky` partitioned by `ingestion_date`, Silver tables by `flight_date`. Uses `mode="append"` — safe to re-run.
@@ -81,3 +89,5 @@ Secrets injected via Doppler (`doppler run`) or `.env` fallback. Expected vars:
 - `OPENSKY_CLIENT_ID_{NAME}` / `OPENSKY_CLIENT_SECRET_{NAME}` — multiple accounts supported, pool rotates in 429
 - `MONGODB_URI` / `POSTGRES_URI` — omit for Docker local defaults
 - `OPENSKY_DELTA_ROOT` — `data/raw` (local), `s3://aeropredict-landing-zone` (CI/R2)
+
+**Doppler CLI is REQUIRED to run almost any pipeline script.** There is **no `.env` file** with these secrets — they live only in Doppler (verified: `MONGODB_URI` is not in `.env`). Before running any `scripts/*.py` that touches Bronze/Silver/Gold, authenticate Doppler locally (`doppler login`, already configured as AeroPredict project) and prefix with `doppler run -- …`. Without it, the script will fail to build the Mongo/Postgres/Delta connections. Local Docker services (`docker compose up -d`) provide the DBs, but the *URIs/creds/pointers* still come from Doppler.
