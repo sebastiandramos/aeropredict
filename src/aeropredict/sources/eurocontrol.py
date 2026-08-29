@@ -1,11 +1,11 @@
 """EUROCONTROL PRU (Performance Review Unit) — CSVs anuales de tráfico y retrasos.
 
 Fuente: https://www.eurocontrol.int/performance/data/download/csv/ — CSVs
-anuales públicos (sin API key). No usa BaseAdapter: las descargas siguen el
-patrón stream de ``download_aircraft_csv`` (requests ``stream=True``,
-``timeout=300``, chunks de 1 MB). El CSV ``apt_dly`` se distribuye comprimido
-con bzip2; se descomprime con el stdlib ``bz2`` en UTF-8 (nunca cp1252) y el
-binario ``.bz2`` no se persiste.
+anuales públicos (sin API key). Las descargas delegan en el helper compartido
+``base.download_stream_to_file`` (requests ``stream=True``, ``timeout=300``,
+chunks de 1 MB, reintentos en 429/5xx). El CSV ``apt_dly`` se distribuye
+comprimido con bzip2; se descomprime con el stdlib ``bz2`` en UTF-8 (nunca
+cp1252) y el binario ``.bz2`` no se persiste.
 """
 
 from __future__ import annotations
@@ -13,9 +13,12 @@ from __future__ import annotations
 import bz2
 import logging
 import os
+import shutil
 from typing import Any
 
 import requests
+
+from aeropredict.sources.base import download_stream_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +33,6 @@ PRU_FILE_TEMPLATES: dict[str, str] = {
     "all_pre_departure_delays": "all_pre_departure_delays_{year}.csv",
 }
 
-# Tamaño máximo de chunk para descarga (1 MB), igual que aircraft_db.
-CHUNK_SIZE = 1024 * 1024
-
 
 def pru_url(filename: str, year: int) -> str:
     """URL del CSV anual PRU para un nombre lógico y un año."""
@@ -41,7 +41,7 @@ def pru_url(filename: str, year: int) -> str:
 
 
 def download_to_file(url: str, dest_path: str) -> str:
-    """Descarga ``url`` a ``dest_path`` con el patrón stream de 1 MB.
+    """Descarga ``url`` a ``dest_path`` (delegado a ``base.download_stream_to_file``).
 
     Args:
         url: URL de descarga.
@@ -51,23 +51,30 @@ def download_to_file(url: str, dest_path: str) -> str:
         Ruta absoluta al archivo descargado.
 
     Raises:
-        requests.RequestException: Si falla la descarga (HTTP 404 incluido).
+        requests.HTTPError: Si el servidor responde 4xx (404/401 incluidos)
+            o si se agotan los reintentos en 5xx.
+        requests.RequestException: Si fallan todos los reintentos (429
+            persistente, timeout o error de conexión).
     """
-    os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+    return download_stream_to_file(url, dest_path)
 
-    logger.info("Descargando %s ...", url)
-    resp = requests.get(url, stream=True, timeout=300)
-    resp.raise_for_status()
 
-    total = 0
-    with open(dest_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
-                total += len(chunk)
+class _ReplacementCountingReader:
+    """Reader de texto que cuenta los U+FFFD (bytes no UTF-8) al leer.
 
-    logger.info("Descargados %d MB → %s", total // (1024 * 1024), dest_path)
-    return os.path.abspath(dest_path)
+    Envuelve el stream de ``bz2.open(..., errors="replace")`` para que
+    ``shutil.copyfileobj`` copie en streaming (64 KB) mientras se cuenta
+    cuántos bytes inválidos se reemplazaron por U+FFFD.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self.replacement_count = 0
+
+    def read(self, size: int = -1) -> str:
+        data = self._stream.read(size)
+        self.replacement_count += data.count("\ufffd")
+        return data
 
 
 def _decompress_bz2(path: str) -> str:
@@ -77,7 +84,9 @@ def _decompress_bz2(path: str) -> str:
     persiste). Decodifica como UTF-8 con ``errors="replace"``: la fuente real
     (verificado en vivo 2026-08-03, ``apt_dly_2025.csv.bz2``) es UTF-8 con
     bytes latinos sueltos que rompen la decodificación estricta; los bytes
-    inválidos se reemplazan por U+FFFD y se registran como warning.
+    inválidos se reemplazan por U+FFFD y se registran como warning. La copia
+    es en streaming (``shutil.copyfileobj``, chunks de 64 KB): nunca se carga
+    el archivo descomprimido entero en RAM.
 
     Args:
         path: Ruta al archivo ``.bz2``.
@@ -89,15 +98,15 @@ def _decompress_bz2(path: str) -> str:
         OSError: Si el archivo bz2 está corrupto.
     """
     dest_path = path.removesuffix(".bz2")
-    with bz2.open(path, "rt", encoding="utf-8", errors="replace") as src:
-        text = src.read()
-    if "\ufffd" in text:
+    with bz2.open(path, "rt", encoding="utf-8", errors="replace") as src, \
+            open(dest_path, "w", encoding="utf-8", newline="") as dst:
+        reader = _ReplacementCountingReader(src)
+        shutil.copyfileobj(reader, dst, length=64 * 1024)
+    if reader.replacement_count:
         logger.warning(
             "PRU apt_dly: %d byte(s) no UTF-8 reemplazados por U+FFFD "
-            "(calidad de datos de la fuente)", text.count("\ufffd"),
+            "(calidad de datos de la fuente)", reader.replacement_count,
         )
-    with open(dest_path, "w", encoding="utf-8", newline="") as dst:
-        dst.write(text)
     os.remove(path)
     return dest_path
 

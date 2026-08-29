@@ -11,18 +11,29 @@ import argparse
 import csv
 import logging
 import sys
+from datetime import UTC, datetime
 from io import StringIO
 from typing import Any
 
 from aeropredict.opensky.config import get_airport_icao_codes, get_delta_root
 from aeropredict.opensky.storage import table_row_exists, write_raw_csv
-from aeropredict.sources.metar import CSV_FIELDS, METAR_URL, MetarAWCAdapter
+from aeropredict.sources.metar import CSV_FIELDS, METAR_URL, MetarAWCAdapter, chunk_codes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 TABLE_NAME = "metar_awc"
 DEFAULT_DAYS = 2
+
+
+def _ingestion_key() -> str:
+    """Clave de ingestión (timestamp UTC) para distinguir runs diarios.
+
+    Se incluye en los ``params`` del dedup y de la escritura para que cada run
+    (06:30 y 19:30 UTC) recolecte METAR fresco en lugar de ser un no-op por el
+    dedup estático (endpoint, ids, hours).
+    """
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _select_codes(airport: str | None) -> list[str]:
@@ -54,10 +65,14 @@ def collect_metar(
 ) -> dict[str, int]:
     """Recolecta METAR de la NOAA AWC y los persiste en ``bronze/metar_awc``.
 
-    Un run = una fila Delta con params ``{"ids": ..., "hours": ...}``
-    (la ventana ``hours`` = días x 24). Idempotente: si la fila (endpoint,
-    params) ya existe se salta; ``force`` la reescribe. Respuestas vacías
-    (HTTP 204 -> ``{}``) se registran como skip sin escribir.
+    Un run = una fila Delta con params ``{"ids": ..., "hours": ...,
+    "ingestion_ts": ...}`` (la ventana ``hours`` = días x 24; ``ingestion_ts``
+    distingue cada run para que el dedup no suprima el segundo run diario).
+    Idempotente: si la fila (endpoint, params) ya existe se salta; ``force``
+    la reescribe. Respuestas vacías (HTTP 204 -> ``{}``) se registran como
+    skip sin escribir. Si TODOS los lotes fallan se reporta ``errors == total``
+    (exit 1); un fallo parcial conserva los lotes obtenidos y reporta el
+    número de lotes fallidos.
 
     Args:
         airport: Código ICAO específico (None = todos los AEROPUERTOS).
@@ -67,7 +82,7 @@ def collect_metar(
         force: Ignorar el dedup por (endpoint, params).
 
     Returns:
-        Stats: total, metar_written, skipped, errors.
+        Stats: total (nº de lotes), metar_written, skipped, errors.
     """
     codes = _select_codes(airport)
     if not codes:
@@ -75,8 +90,12 @@ def collect_metar(
         return {"total": 0, "metar_written": 0, "skipped": 0, "errors": 0}
 
     hours = max(1, days_back * 24)
-    params: dict[str, Any] = {"ids": ",".join(codes), "hours": hours}
-    total = 1
+    params: dict[str, Any] = {
+        "ids": ",".join(codes),
+        "hours": hours,
+        "ingestion_ts": _ingestion_key(),
+    }
+    total = len(chunk_codes(codes))
 
     if dry_run:
         logger.info(
@@ -89,21 +108,22 @@ def collect_metar(
         logger.info("METAR ya existe para %s (skip)", params["ids"])
         return {"total": total, "metar_written": 0, "skipped": 1, "errors": 0}
 
-    try:
-        data = MetarAWCAdapter().get_metars(codes, hours=hours)
-    except Exception as e:
-        logger.warning("METAR error: %s", e)
-        return {"total": total, "metar_written": 0, "skipped": 0, "errors": 1}
+    data = MetarAWCAdapter().get_metars(codes, hours=hours)
 
-    if data is None or data.get("count", 0) == 0:
+    if data is None:
+        logger.error("Todos los lotes METAR fallaron")
+        return {"total": total, "metar_written": 0, "skipped": 0, "errors": total}
+
+    errors = data.get("errors", 0)
+    if data.get("count", 0) == 0:
         logger.info("Sin METAR disponibles para %s (skip)", params["ids"])
-        return {"total": total, "metar_written": 0, "skipped": 1, "errors": 0}
+        return {"total": total, "metar_written": 0, "skipped": 1, "errors": errors}
 
     csv_text = _reports_to_csv(data["raw"])
     write_raw_csv(TABLE_NAME, METAR_URL, params, csv_text, delta_root)
     logger.info("METAR guardado en Bronze: %d informes", data["count"])
 
-    return {"total": total, "metar_written": 1, "skipped": 0, "errors": 0}
+    return {"total": total, "metar_written": 1, "skipped": 0, "errors": errors}
 
 
 def main(argv: list[str] | None = None) -> int:

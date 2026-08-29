@@ -134,13 +134,19 @@ python scripts/silver_to_gold_entities.py --dry-run
 | `flights` | `gold.flights` | Raw (tabular) | `SERIAL` + índices |
 | `aircraft` | `gold.aircraft` | Maestra | `icao24` |
 | `weather` | `gold.weather` | Horaria | `SERIAL` + índice `(airport_code, flight_date)` |
-| `aena_infovuelos` | `gold.aena_infovuelos` | Horaria | `SERIAL` + UNIQUE `(snapshot_at_utc, flight_number, aena_airport_iata, flight_type)` |
+| `aena_infovuelos` | `gold.aena_infovuelos` | Horaria | `SERIAL` + UNIQUE `(snapshot_at_utc, flight_number, aena_airport_iata, flight_type, scheduled_local)` |
 | `metar` | `gold.metar` | Meteorológica (METAR) | `SERIAL` + UNIQUE `(icao_id, obs_time)` |
 | `holidays` | `gold.holidays` | Calendario | `SERIAL` + UNIQUE `(date, name, country_code, source, subdivision)` |
 | `eurocontrol_pru` | `gold.eurocontrol_pru` | Operacional (PRU) | `SERIAL` + UNIQUE `(source_file, year, row_json)` |
 | `notam` | `gold.notam` | NOTAM | `SERIAL` + UNIQUE `(layer, feature_json)` |
 | `airports` | `gold.airports` | Maestra | `ident` |
 | `runways` | `gold.runways` | Maestra | `(airport_ident, le_ident, he_ident)` |
+
+> **AENA unique key**: `silver_to_gold_entities.py` auto-reconcilia el UNIQUE de
+> `gold.aena_infovuelos` (5 columnas, incl. `scheduled_local`) al sincronizar
+> AENA: si el constraint vigente es el antiguo de 4 columnas, migra
+> automáticamente una vez por proceso. Fallback manual:
+> `python scripts/migrate_aena_gold_unique.py --apply`.
 
 ### Pipeline completo mock (un solo comando)
 

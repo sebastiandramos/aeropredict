@@ -171,6 +171,14 @@ def test_download_to_file_streams_with_timeout(monkeypatch, tmp_path):
     """Descarga tipo aircraft_db: stream=True, timeout=300, chunks de 1 MB."""
 
     class FakeResp:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
         def raise_for_status(self):
             pass
 

@@ -250,6 +250,11 @@ save_to_bronze.py
 test_avstack.py
 test_avstack_free.py
 test_key.py
+scripts/_check_atlas_dbs_tmp.py
+scripts/_check_atlas_size_tmp.py
+scripts/_inspect_bronze_tmp.py
+scripts/_inspect_r2_tmp.py
+YfMRBhUT - tfm-aeropredict.json
 
 # Presentation / deliverable files
 *.pptx

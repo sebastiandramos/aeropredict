@@ -155,7 +155,9 @@ def test_collect_metar_writes_bronze(monkeypatch):
     (source, endpoint, params, csv_text, delta_root), _ = raw_calls[0]
     assert source == "metar_awc"
     assert endpoint == module.METAR_URL
-    assert params == {"ids": "LEMD", "hours": 48}
+    assert params["ids"] == "LEMD"
+    assert params["hours"] == 48
+    assert "ingestion_ts" in params
     assert delta_root == "data/raw"
     lines = csv_text.strip().splitlines()
     assert lines[0] == (
@@ -248,3 +250,99 @@ def test_main_exit_codes(monkeypatch):
         lambda **kwargs: {"total": 2, "metar_written": 1, "skipped": 0, "errors": 1},
     )
     assert module.main(["--airport", "LEMD"]) == 0
+
+
+def test_metar_adapter_partial_batch_failure_returns_partial(monkeypatch):
+    calls = []
+
+    def fake_http_get(url, headers=None, params=None, timeout=30):
+        calls.append(params)
+        if len(calls) == 1:
+            return [{"icaoId": "LE01", "rawOb": "METAR LE01"}]
+        raise requests.RequestException("boom on second batch")
+
+    monkeypatch.setattr(metar, "http_get_with_retry", fake_http_get)
+
+    codes = [f"LE{i:02d}" for i in range(62)]
+    result = metar.MetarAWCAdapter().get_metars(codes, hours=48)
+
+    assert result is not None
+    assert result["count"] == 1
+    assert result["errors"] == 1
+    assert len(calls) == 2
+
+
+def test_metar_adapter_all_batches_fail_returns_none(monkeypatch):
+    def fake_http_get(*args, **kwargs):
+        raise requests.RequestException("boom")
+
+    monkeypatch.setattr(metar, "http_get_with_retry", fake_http_get)
+
+    codes = [f"LE{i:02d}" for i in range(62)]
+    assert metar.MetarAWCAdapter().get_metars(codes, hours=48) is None
+
+
+def test_metar_adapter_unexpected_exception_is_caught_per_batch(monkeypatch):
+    calls = []
+
+    def fake_http_get(url, headers=None, params=None, timeout=30):
+        calls.append(params)
+        if len(calls) == 1:
+            return [{"icaoId": "LE01", "rawOb": "METAR LE01"}]
+        # schema drift / programming error — not a requests error
+        raise ValueError("unexpected schema drift")
+
+    monkeypatch.setattr(metar, "http_get_with_retry", fake_http_get)
+
+    codes = [f"LE{i:02d}" for i in range(62)]
+    result = metar.MetarAWCAdapter().get_metars(codes, hours=48)
+
+    assert result is not None
+    assert result["count"] == 1
+    assert result["errors"] == 1
+
+
+def test_collect_metar_two_runs_both_write(monkeypatch):
+    module = _load_collect_metar_module()
+
+    monkeypatch.setattr(
+        metar, "http_get_with_retry",
+        lambda url, headers=None, params=None, timeout=30: _two_station_fixture(),
+    )
+    # distinct ingestion keys per run → dedup no-op, both runs write fresh
+    keys = iter(["2026-08-03T06:30:00+00:00", "2026-08-03T19:30:00+00:00"])
+    monkeypatch.setattr(module, "_ingestion_key", lambda: next(keys))
+    monkeypatch.setattr(module, "table_row_exists", lambda *a, **k: False)
+
+    raw_calls = []
+
+    def fake_write_raw_csv(*args, **kwargs):
+        raw_calls.append(args)
+        return 1
+
+    monkeypatch.setattr(module, "write_raw_csv", fake_write_raw_csv)
+
+    stats1 = module.collect_metar(airport="LEMD", delta_root="data/raw")
+    stats2 = module.collect_metar(airport="LEMD", delta_root="data/raw")
+
+    assert stats1["metar_written"] == 1
+    assert stats2["metar_written"] == 1
+    assert len(raw_calls) == 2
+    # distinct ingestion keys → distinct dedup keys per run
+    assert raw_calls[0][2]["ingestion_ts"] != raw_calls[1][2]["ingestion_ts"]
+
+
+def test_collect_metar_all_batches_fail_returns_errors(monkeypatch):
+    module = _load_collect_metar_module()
+
+    def fake_http_get(*args, **kwargs):
+        raise requests.RequestException("boom")
+
+    monkeypatch.setattr(metar, "http_get_with_retry", fake_http_get)
+    monkeypatch.setattr(module, "table_row_exists", lambda *a, **k: False)
+    monkeypatch.setattr(module, "write_raw_csv", lambda *a, **k: 1)
+
+    stats = module.collect_metar(airport="LEMD", delta_root="data/raw")
+
+    assert stats["errors"] == stats["total"]
+    assert stats["metar_written"] == 0

@@ -1,4 +1,7 @@
-"""Migración del unique key de ``gold.aena_infovuelos``.
+"""Migración del unique key de ``gold.aena_infovuelos`` (CLI).
+
+Thin wrapper sobre ``aeropredict.opensky.migrate_aena_gold_unique``: parsea
+flags, conecta a PostgreSQL y delega la lógica en la librería.
 
 Añade ``scheduled_local`` al constraint UNIQUE existente, que actualmente es
 ``(snapshot_at_utc, flight_number, aena_airport_iata, flight_type)`` y provoca que
@@ -8,11 +11,6 @@ fecha programada) colisionen y se pierdan en el ``ON CONFLICT ... DO NOTHING``.
 Nuevo unique key: ``(snapshot_at_utc, flight_number, aena_airport_iata,
 flight_type, scheduled_local)``.
 
-Seguridad:
-- No asume el nombre autogenerado de la constraint: lo busca en ``pg_constraint``.
-- Verifica que no haya duplicados según el NUEVO key antes de alterar.
-- Corre en modo ``--dry-run`` por defecto (solo inspecciona). ``--apply`` altera.
-
 Uso:
     doppler run -- python scripts/migrate_aena_gold_unique.py            # dry-run
     doppler run -- python scripts/migrate_aena_gold_unique.py --apply    # aplicar
@@ -21,10 +19,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 import psycopg2
 
 from aeropredict.opensky.config import get_postgres_uri
+from aeropredict.opensky.migrate_aena_gold_unique import (
+    AENA_UNIQUE_COLUMNS,
+    count_aena_duplicates,
+    get_aena_unique_constraints,
+    migrate_aena_gold_unique,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,105 +38,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TABLE = "gold.aena_infovuelos"
-NEW_COLUMNS = (
-    "snapshot_at_utc",
-    "flight_number",
-    "aena_airport_iata",
-    "flight_type",
-    "scheduled_local",
-)
 
-DUP_CHECK_SQL = f"""
-SELECT COUNT(*) AS dupes
-FROM (
-    SELECT {", ".join(NEW_COLUMNS)}
-    FROM {TABLE}
-    GROUP BY {", ".join(NEW_COLUMNS)}
-    HAVING COUNT(*) > 1
-) AS d;
-"""
-
-# Busca constraints UNIQUE de una columna anteponiendo (info schématica genérica).
-FIND_UNIQUE_SQL = """
-SELECT con.conname
-FROM pg_constraint con
-JOIN pg_class rel ON rel.oid = con.conrelid
-JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
-JOIN pg_attribute att ON att.attrelid = con.conrelid
-                        AND att.attnum = ANY (con.conkey)
-WHERE con.contype = 'u'
-  AND nsp.nspname = 'gold'
-  AND rel.relname = 'aena_infovuelos'
-GROUP BY con.conname
-ORDER BY con.conname;
-"""
-
-
-def _get_conn(apply: bool):
-    conn = psycopg2.connect(get_postgres_uri())
-    conn.autocommit = True
-    return conn
-
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Migración unique key de gold.aena_infovuelos")
     parser.add_argument(
         "--apply",
         action="store_true",
         help="Aplicar el ALTER (defecto: dry-run, solo inspecciona).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    conn = _get_conn(args.apply)
-    with conn.cursor() as cur:
+    conn = psycopg2.connect(get_postgres_uri())
+    conn.autocommit = True
+    try:
         # 1. ¿Duplicados según el nuevo key?
-        cur.execute(DUP_CHECK_SQL)
-        row = cur.fetchone()
-        dupes = row[0] if row else 0
-        logger.info("Duplicados según nuevo key %s: %d", NEW_COLUMNS, dupes)
+        dupes = count_aena_duplicates(conn)
+        logger.info("Duplicados según nuevo key %s: %d", AENA_UNIQUE_COLUMNS, dupes)
         if dupes:
             logger.error(
                 "Hay %d duplicados según el nuevo key. Aborto: revisar antes de migrar.",
                 dupes,
             )
-            conn.close()
-            raise SystemExit(1)
+            return 1
 
         # 2. Constraint actual
-        cur.execute(FIND_UNIQUE_SQL)
-        existing = [r[0] for r in cur.fetchall()]
+        constraints = get_aena_unique_constraints(conn)
         logger.info("Constraints UNIQUE actuales en gold.aena_infovuelos:")
-        for name in existing:
-            logger.info("    - %s", name)
-        if not existing:
-            logger.warning("No se encontró ningún constraint UNIQUE. Nada que migrar.")
-            conn.close()
-            return
+        for name, cols in constraints:
+            logger.info("    - %s (%s)", name, ", ".join(cols))
+        if not constraints:
+            logger.warning("No se encontró ningún constraint UNIQUE.")
 
         if not args.apply:
             logger.info("MODO DRY-RUN: no se ha alterado nada. Usa --apply para migrar.")
-            conn.close()
-            return
+            return 0
 
-        # 3. Alter: dropear UNIQUEs existentes y crear el nuevo con scheduled_local
-        for name in existing:
-            logger.info("Dropeando constraint UNIQUE %s...", name)
-            cur.execute(f'ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS "{name}"')
-
-        new_cols_sql = ", ".join(NEW_COLUMNS)
-        logger.info(
-            "Creando nuevo UNIQUE (%s)...",
-            new_cols_sql,
-        )
-        cur.execute(
-            f"ALTER TABLE {TABLE} ADD CONSTRAINT uq_aena_infovuelos_unique "
-            f"UNIQUE ({new_cols_sql})"
-        )
-        logger.info("Migración aplicada correctamente.")
-
-    conn.close()
+        # 3. Migrar: dropear UNIQUEs existentes y crear el nuevo con scheduled_local
+        migrate_aena_gold_unique(conn)
+        return 0
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

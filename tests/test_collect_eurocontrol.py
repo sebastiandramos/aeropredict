@@ -125,6 +125,55 @@ def test_download_pru_csvs_tolerates_corrupt_utf8_bytes(tmp_path, monkeypatch):
     assert "\ufffd" in decoded  # byte corrupto → U+FFFD, sin abortar
 
 
+def test_decompress_bz2_streams_with_copyfileobj_64kb(tmp_path, monkeypatch):
+    """_decompress_bz2 copia en streaming: copyfileobj con chunks de 64 KB."""
+    raw_bytes = (
+        b"Year,Month,APT_ICAO,APT_NAME,TotalDelay\r\n"
+        b"2026,1,LEMD,Madrid,5400\r\n"
+    )
+    bz2_path = tmp_path / "apt_dly.csv.bz2"
+    bz2_path.write_bytes(bz2.compress(raw_bytes))
+
+    captured: dict = {}
+
+    def fake_copyfileobj(src, dst, length=16 * 1024):
+        captured["length"] = length
+        while True:
+            buf = src.read(length)
+            if not buf:
+                break
+            dst.write(buf)
+
+    monkeypatch.setattr(eurocontrol.shutil, "copyfileobj", fake_copyfileobj)
+
+    dest = eurocontrol._decompress_bz2(str(bz2_path))
+
+    assert captured["length"] == 64 * 1024
+    # bz2 en modo texto aplica newlines universales (CRLF → LF), igual que la
+    # implementación original; el contenido se conserva exacto.
+    expected = raw_bytes.decode("utf-8").replace("\r\n", "\n")
+    with open(dest, encoding="utf-8", newline="") as f:
+        assert f.read() == expected
+    assert not Path(bz2_path).exists()  # el .bz2 no se persiste
+
+
+def test_decompress_bz2_warns_on_utf8_replacement(tmp_path, monkeypatch, caplog):
+    """Bytes no UTF-8 → U+FFFD en la salida + warning con el conteo."""
+    raw_bytes = (
+        b"Year,Month,APT_ICAO,APT_NAME,TotalDelay\r\n"
+        b"2026,1,LEMD,Madr\xfcd,5400\r\n"  # 0xfc latino inválido en UTF-8
+    )
+    bz2_path = tmp_path / "apt_dly.csv.bz2"
+    bz2_path.write_bytes(bz2.compress(raw_bytes))
+
+    with caplog.at_level(logging.WARNING):
+        dest = eurocontrol._decompress_bz2(str(bz2_path))
+
+    decoded = Path(dest).read_text(encoding="utf-8")
+    assert "\ufffd" in decoded  # byte corrupto → U+FFFD, sin abortar
+    assert any("U+FFFD" in record.message for record in caplog.records)
+
+
 def test_download_pru_csvs_404_marks_error_and_continues(tmp_path, monkeypatch):
     """Un 404 (año futuro / URL drift) marca error por archivo sin abortar."""
     def fake_download_to_file(url, dest_path):

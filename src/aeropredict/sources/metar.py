@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import requests
+
 from aeropredict.sources.base import BaseAdapter, http_get_with_retry
 
 logger = logging.getLogger(__name__)
@@ -65,14 +67,20 @@ class MetarAWCAdapter(BaseAdapter):
             hours: Ventana temporal hacia atrás en horas.
 
         Returns:
-            ``{"raw": [...], "count": n, "airport_codes": ids}`` con los
-            informes aplanados, o ``None`` si la API falla tras los
-            reintentos de ``http_get_with_retry``.
+            ``{"raw": [...], "count": n, "airport_codes": ids, "errors": e}``
+            con los informes aplanados de los lotes que tuvieron éxito y el
+            número de lotes fallidos, o ``None`` si TODOS los lotes fallaron.
+            Los fallos de un lote no descartan los lotes ya obtenidos: se
+            acumulan los resultados parciales y se reporta el conteo de
+            errores. Los fallos HTTP esperados (``requests.RequestException``)
+            se registran como warning; cualquier otra excepción (p. ej. drift
+            de esquema) se registra con traceback completo.
         """
         if not icao_codes:
             return None
 
         reports: list[dict[str, Any]] = []
+        failed_batches = 0
         for batch in chunk_codes(icao_codes):
             params: dict[str, Any] = {
                 "ids": ",".join(batch),
@@ -82,15 +90,24 @@ class MetarAWCAdapter(BaseAdapter):
             }
             try:
                 data = http_get_with_retry(METAR_URL, params=params)
-            except Exception as e:
+            except requests.RequestException as e:
+                failed_batches += 1
                 logger.warning("AWC METAR error para %s: %s", ",".join(batch), e)
-                return None
+                continue
+            except Exception:
+                failed_batches += 1
+                logger.exception("AWC METAR error inesperado para %s", ",".join(batch))
+                continue
             reports.extend(self._normalize_reports(data))
+
+        if not reports and failed_batches > 0:
+            return None
 
         return {
             "raw": reports,
             "count": len(reports),
             "airport_codes": icao_codes,
+            "errors": failed_batches,
         }
 
     # -- Normalización -------------------------------------------------------

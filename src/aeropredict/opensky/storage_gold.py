@@ -68,6 +68,11 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 from .config import get_postgres_uri
+from .migrate_aena_gold_unique import (
+    AENA_UNIQUE_COLUMNS,
+    get_aena_unique_constraints,
+    migrate_aena_gold_unique,
+)
 from .models import Flight
 
 logger = logging.getLogger(__name__)
@@ -327,12 +332,13 @@ CREATE INDEX IF NOT EXISTS idx_runways_surface ON gold.runways (surface);
 
 def _get_conn():
     """Conecta a PostgreSQL y crea tablas si no existen."""
-    global _conn
+    global _conn, _aena_unique_reconciled
     if _conn is None or _conn.closed:
         uri = get_postgres_uri()
         logger.debug("Conectando a PostgreSQL: %s", uri)
         _conn = psycopg2.connect(uri)
         _conn.autocommit = True
+        _aena_unique_reconciled = False
         with _conn.cursor() as cur:
             cur.execute(SCHEMA_SQL)
     return _conn
@@ -340,10 +346,51 @@ def _get_conn():
 
 def close() -> None:
     """Cierra la conexión a PostgreSQL."""
-    global _conn
+    global _conn, _aena_unique_reconciled
     if _conn is not None and not _conn.closed:
         _conn.close()
     _conn = None
+    _aena_unique_reconciled = False
+
+
+# Cache de reconciliación del unique key de gold.aena_infovuelos (por proceso).
+# Se consulta pg_constraint una sola vez por proceso; si el constraint es el
+# antiguo de 4 columnas, se migra automáticamente antes del primer write AENA.
+_aena_unique_reconciled = False
+
+AENA_MIGRATION_FALLBACK = "python scripts/migrate_aena_gold_unique.py --apply"
+
+
+def _reconcile_aena_gold_unique(conn: Any) -> None:
+    """Asegura que gold.aena_infovuelos tenga el unique key de 5 columnas.
+
+    Consulta el constraint real en pg_constraint usando la MISMA conexión del
+    writer. Si ya es el de 5 columnas → no-op. Si es el antiguo de 4 (u otro),
+    aplica la migración automáticamente UNA VEZ por proceso (cache en
+    ``_aena_unique_reconciled``). Si la migración no se puede ejecutar, lanza
+    un error claro con el fallback manual — nunca deja los downstream entities
+    sin sincronizar silenciosamente.
+    """
+    global _aena_unique_reconciled
+    if _aena_unique_reconciled:
+        return
+    try:
+        constraints = get_aena_unique_constraints(conn)
+        if any(cols == list(AENA_UNIQUE_COLUMNS) for _, cols in constraints):
+            logger.debug("gold.aena_infovuelos ya tiene el unique key de 5 columnas")
+        else:
+            logger.info(
+                "Reconciliando unique key de gold.aena_infovuelos "
+                "(constraints actuales: %s)...",
+                constraints,
+            )
+            migrate_aena_gold_unique(conn)
+        _aena_unique_reconciled = True
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo reconciliar el unique key de gold.aena_infovuelos "
+            f"({exc}). Ejecuta manualmente: {AENA_MIGRATION_FALLBACK}"
+        ) from exc
 
 
 # ===================================================================
@@ -770,6 +817,7 @@ def write_aena_infovuelos_gold(docs: list[dict[str, Any]]) -> int:
         )
 
     conn = _get_conn()
+    _reconcile_aena_gold_unique(conn)
     with conn.cursor() as cur:
         execute_values(
             cur,
