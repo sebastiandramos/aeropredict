@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 from typing import Any
@@ -195,6 +196,109 @@ def http_post_with_retry(
             if attempt < MAX_RETRIES:
                 time.sleep(_backoff_delay(attempt))
             last_exc = e
+
+    raise requests.RequestException(f"All {MAX_RETRIES} retries failed for {url}") from last_exc
+
+
+# ---------------------------------------------------------------------------
+# Utility: descarga streaming con reintentos
+# ---------------------------------------------------------------------------
+
+
+def download_stream_to_file(
+    url: str,
+    dest_path: str,
+    timeout: int = 300,
+    chunk_size: int = 1024 * 1024,
+) -> str:
+    """Descarga ``url`` a ``dest_path`` en streaming con reintentos.
+
+    Usa ``requests.get(..., stream=True)`` dentro de un context manager para
+    que la respuesta se cierre SIEMPRE (también en excepciones a mitad de
+    stream). Reintenta en 429, 5xx, timeout y errores de conexión con el
+    mismo backoff exponencial + jitter que ``http_get_with_retry`` (respeta
+    ``Retry-After``); el reintento aplica solo al GET inicial, no a la
+    lectura del cuerpo.
+
+    Args:
+        url: URL de descarga.
+        dest_path: Ruta de destino.
+        timeout: Timeout del GET (default 300s, igual que aircraft_db).
+        chunk_size: Tamaño de chunk de streaming (default 1 MB).
+
+    Returns:
+        Ruta absoluta al archivo descargado.
+
+    Raises:
+        requests.HTTPError: Si el servidor responde 4xx (404/401 incluidos)
+            o si se agotan los reintentos en 5xx.
+        requests.RequestException: Si fallan todos los reintentos (429
+            persistente, timeout o error de conexión).
+    """
+    os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+    logger.info("Descargando %s ...", url)
+
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, stream=True, timeout=timeout)
+        except requests.Timeout:
+            logger.warning("Timeout: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = requests.Timeout(f"Timeout after {timeout}s: {url}")
+            continue
+        except requests.ConnectionError as e:
+            logger.warning("Connection error: %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = e
+            continue
+        except requests.RequestException as e:
+            if attempt < MAX_RETRIES:
+                time.sleep(_backoff_delay(attempt))
+            last_exc = e
+            continue
+
+        # La respuesta se cierra SIEMPRE (también en excepciones a mitad de
+        # stream) vía context manager.
+        with resp:
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(resp)
+                wait = retry_after if retry_after else _backoff_delay(attempt)
+                logger.warning(
+                    "HTTP 429: %s (attempt %d/%d) → waiting %.1fs",
+                    url,
+                    attempt,
+                    MAX_RETRIES,
+                    wait,
+                )
+                time.sleep(wait)
+                continue
+            try:
+                resp.raise_for_status()
+            except requests.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status >= 500 and attempt < MAX_RETRIES:
+                    logger.warning(
+                        "HTTP %d: %s (attempt %d/%d)",
+                        status,
+                        url,
+                        attempt,
+                        MAX_RETRIES,
+                    )
+                    time.sleep(_backoff_delay(attempt))
+                    last_exc = e
+                    continue
+                raise
+            total = 0
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        total += len(chunk)
+            logger.info("Descargados %d MB → %s", total // (1024 * 1024), dest_path)
+            return os.path.abspath(dest_path)
 
     raise requests.RequestException(f"All {MAX_RETRIES} retries failed for {url}") from last_exc
 

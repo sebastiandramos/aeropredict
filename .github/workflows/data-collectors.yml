@@ -1,0 +1,41 @@
+name: Data Collectors (Bronze)
+
+# Lint + tests del repo. Los 5 colectores sin API key (NOAA AWC METAR,
+# Nager.Date + python-holidays, EUROCONTROL PRU, OurAirports, ENAIRE servAIS)
+# ahora corren dentro del job `extract` de pipeline.yml con continue-on-error
+# (aislamiento de fallos). Este workflow es el único job de CI que ejecuta
+# `pytest tests/` + `ruff check` (job `lint-test`).
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # daily 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: data-collectors
+  cancel-in-progress: true
+
+env:
+  OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
+
+jobs:
+  lint-test:
+    name: Lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies (dev)
+        run: pip install -e ".[dev]"
+
+      - name: Run pytest suite
+        run: pytest tests/
+
+      - name: Ruff lint
+        run: ruff check scripts/ src/ tests/

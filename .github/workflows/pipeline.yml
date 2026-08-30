@@ -1,7 +1,9 @@
 name: Pipeline de extracción diaria
 
 # Flujo ETL claro en 5 etapas:
-# 1) Extract: OpenSky flights + Open-Meteo weather → Bronze Delta
+# 1) Extract: OpenSky flights (CRITICAL) + Open-Meteo weather + colectores
+#    sin API key (METAR, festivos, EUROCONTROL PRU, OurAirports, NOTAM) → Bronze
+#    Delta. OpenSky es crítico; el resto usa continue-on-error (aislamiento de fallos).
 # 2) Bronze → Silver: promote Bronze data a MongoDB
 # 3) Silver → Gold (flights): agrega vuelos en tablas analíticas
 # 4) Entity sync: copia entidades raw (flights, aircraft, weather) a Gold
@@ -12,6 +14,15 @@ on:
     - cron: '30 6 * * *'   # 06:30 UTC (08:30 CEST)
     - cron: '30 19 * * *'  # 19:30 UTC (21:30 CEST)
   workflow_dispatch:       # trigger manual para testing
+    inputs:
+      metar_days:
+        description: "METAR lookback window in days (collect_metar --days)"
+        required: false
+        default: "2"
+      eurocontrol_year:
+        description: "EUROCONTROL PRU year (empty = current year)"
+        required: false
+        default: ""
 
 concurrency:
   group: pipeline-diaria
@@ -39,7 +50,40 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       - name: Extraer Open-Meteo → Bronze Delta (R2)
+        continue-on-error: true
         run: doppler run -- python scripts/collect_weather.py --days 2
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      - name: Collect METAR (NOAA AWC) → bronze/metar_awc
+        continue-on-error: true
+        run: doppler run -- python scripts/collect_metar.py --days "$METAR_DAYS"
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          METAR_DAYS: ${{ github.event.inputs.metar_days || '2' }}
+      - name: Collect Spanish holidays (Nager.Date + python-holidays) → bronze/holidays_*
+        continue-on-error: true
+        run: doppler run -- python scripts/collect_holidays.py
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      - name: Collect EUROCONTROL PRU CSV → bronze/eurocontrol_pru
+        continue-on-error: true
+        run: |
+          if [ -n "$EUROCONTROL_YEAR" ]; then
+            doppler run -- python scripts/collect_eurocontrol.py --year "$EUROCONTROL_YEAR"
+          else
+            doppler run -- python scripts/collect_eurocontrol.py
+          fi
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          EUROCONTROL_YEAR: ${{ github.event.inputs.eurocontrol_year || '' }}
+      - name: Collect OurAirports (airports + runways) → bronze/ourairports_*
+        continue-on-error: true
+        run: doppler run -- python scripts/collect_ourairports.py
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      - name: Collect NOTAM (ENAIRE servAIS) → bronze/notam_enaire
+        continue-on-error: true
+        run: doppler run -- python scripts/collect_notam.py
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 

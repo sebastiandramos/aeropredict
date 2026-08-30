@@ -2,16 +2,24 @@
 """Script 2/5: promote datos de Bronze a Silver.
 
 Este script procesa los registros crudos almacenados en Bronze (Delta Lake) y
-los convierte en documentos listos para MongoDB. Actualmente maneja tres tipos
-de ingestión:
+los convierte en documentos listos para MongoDB. Maneja siete tipos de
+ingestión:
 
 - vuelos OpenSky (`bronze/opensky`) → `flights` en MongoDB
 - datos meteorológicos Open-Meteo (`bronze/weather_openmeteo`) → `weather` en MongoDB
 - datos AENA Infovuelos (`bronze/aena_infovuelos`) → `aena_infovuelos` en MongoDB
+- informes METAR (`bronze/metar_awc`) → `metar` en MongoDB
+- festivos de España (`bronze/holidays_nager_date` + `bronze/holidays_python`)
+  → `holidays` en MongoDB
+- filas CSV de EUROCONTROL PRU (`bronze/eurocontrol_pru`) → `eurocontrol_pru`
+  en MongoDB
+- NOTAM de ENAIRE (`bronze/notam_enaire`) → `notam` en MongoDB
 
-AENA se promociona por hora UTC con checkpoints independientes de OpenSky
-(colección ``bronze_to_silver_aena``): cada hora pendiente se procesa y solo se
-marca como completada si toda su escritura termina correctamente.
+AENA y METAR se promocionan por hora UTC con checkpoints independientes de
+OpenSky: cada hora pendiente se procesa y solo se marca como completada si toda
+su escritura termina correctamente. Festivos (por ``source_año``), EUROCONTROL
+(por ``filename_año``) y NOTAM (por ``snapshot_at``) usan el mismo patrón de
+checkpoint clave-valor con marcado solo tras escritura correcta.
 
 Uso:
     python scripts/bronze_to_silver.py [--date YYYY-MM-DD] [--delta-root PATH]
@@ -26,10 +34,13 @@ Flujo:
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import logging
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from typing import Any
@@ -48,7 +59,11 @@ from aeropredict.opensky.storage_silver import (
 )
 from aeropredict.opensky.storage_silver import (
     write_aena_infovuelos,
+    write_eurocontrol_pru,
     write_flights_silver,
+    write_holidays,
+    write_metar,
+    write_notam,
     write_weather,
 )
 from aeropredict.sources.aena_infovuelos import AenaInfovuelosAdapter
@@ -56,6 +71,10 @@ from aeropredict.sources.airport_codes import get_icao_for_iata
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
 CHECKPOINT_COLLECTION_AENA = "bronze_to_silver_aena"
+CHECKPOINT_COLLECTION_METAR = "bronze_to_silver_metar"
+CHECKPOINT_COLLECTION_HOLIDAYS = "bronze_to_silver_holidays"
+CHECKPOINT_COLLECTION_EUROCONTROL = "bronze_to_silver_eurocontrol"
+CHECKPOINT_COLLECTION_NOTAM = "bronze_to_silver_notam"
 logger = logging.getLogger("bronze_to_silver")
 
 
@@ -95,12 +114,229 @@ def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def _safe(arr: list[Any], idx: int) -> Any:
     """Devuelve el valor en el índice indicado o None si no existe.
 
-    Esto permite procesar arrays horarias incompletos sin lanzar excepciones.
+    Esto permite procesar arrays horarias incompletas sin lanzar excepciones.
     """
     try:
         return arr[idx]
     except (IndexError, TypeError):
         return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    """Coerce a entero; None si vacío o no numérico (defensivo, sin crash).
+
+    Acepta ``"1200"`` y ``"18.0"``; ``""``, ``"M"`` o ``"N/A"`` devuelven None.
+    """
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Coerce a float; None si vacío o no numérico (defensivo, sin crash)."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _split_pipe(value: Any) -> list[str]:
+    """Divide un valor CSV separado por ``|`` en lista (vacío → [])."""
+    if not value:
+        return []
+    return [part for part in str(value).split("|") if part]
+
+
+# ===================================================================
+# Doc builders de las fuentes complementarias (puros, sin DB)
+# ===================================================================
+
+
+def _build_metar_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Construye documentos METAR para MongoDB a partir de filas Bronze.
+
+    Cada fila Bronze contiene en ``response`` el texto CSV plano (header + una
+    fila por informe, columnas camelCase de ``aeropredict.sources.metar``). Se
+    omiten las filas CSV sin ``icaoId``. Los campos numéricos se coercionan con
+    ``_coerce_int``/``_coerce_float`` (vacío o no numérico → None).
+    """
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            reader = csv.DictReader(io.StringIO(response))
+            for csv_row in reader:
+                icao_id = (csv_row.get("icaoId") or "").strip()
+                if not icao_id:
+                    continue
+                docs.append({
+                    "icao_id": icao_id,
+                    "raw_ob": csv_row.get("rawOb", ""),
+                    "receipt_time": csv_row.get("receiptTime", ""),
+                    "obs_time": _coerce_int(csv_row.get("obsTime")),
+                    "temp": _coerce_float(csv_row.get("temp")),
+                    "dewp": _coerce_float(csv_row.get("dewp")),
+                    "wdir": _coerce_int(csv_row.get("wdir")),
+                    "wspd": _coerce_int(csv_row.get("wspd")),
+                    "wgst": _coerce_int(csv_row.get("wgst")),
+                    "visib": csv_row.get("visib", ""),
+                    "altim": _coerce_float(csv_row.get("altim")),
+                    "flt_cat": csv_row.get("fltCat", ""),
+                    "clouds_base": _coerce_int(csv_row.get("clouds_base")),
+                })
+        except (csv.Error, TypeError, ValueError):
+            continue
+    return docs
+
+
+def _build_nager_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Construye documentos de festivos Nager.Date a partir de filas Bronze.
+
+    ``response`` es el CSV plano con header ``date,localName,name,countryCode,
+    global,counties,types``. ``global`` se interpreta como bool
+    (``"true"`` → True) y ``counties``/``types`` se dividen por ``|``.
+    """
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            reader = csv.DictReader(io.StringIO(response))
+            for csv_row in reader:
+                docs.append({
+                    "date": csv_row.get("date", ""),
+                    "name": csv_row.get("name", ""),
+                    "local_name": csv_row.get("localName", ""),
+                    "country_code": csv_row.get("countryCode", "ES"),
+                    "is_global": csv_row.get("global", "").strip().lower() == "true",
+                    "counties": _split_pipe(csv_row.get("counties")),
+                    "types": _split_pipe(csv_row.get("types")),
+                    "source": "nager_date",
+                    "subdivision": "",
+                })
+        except (csv.Error, TypeError, ValueError):
+            continue
+    return docs
+
+
+def _build_python_holidays_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Construye documentos de festivos python-holidays a partir de filas Bronze.
+
+    ``response`` es JSON con ``{"raw": {subdiv: {fecha: nombre}}}``. Se genera
+    un documento por (subdivisión, fecha) con ``source="python_holidays"``.
+    """
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            payload = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        raw = payload.get("raw", {}) if isinstance(payload, dict) else {}
+        if not isinstance(raw, dict):
+            continue
+        for subdivision, holidays_map in raw.items():
+            if not isinstance(holidays_map, dict):
+                continue
+            for holiday_date, name in holidays_map.items():
+                docs.append({
+                    "date": holiday_date,
+                    "name": name,
+                    "local_name": "",
+                    "country_code": "ES",
+                    "is_global": False,
+                    "counties": [],
+                    "types": [],
+                    "source": "python_holidays",
+                    "subdivision": subdivision,
+                })
+    return docs
+
+
+def _build_eurocontrol_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Construye documentos EUROCONTROL PRU a partir de filas Bronze.
+
+    ``params`` (JSON) aporta ``filename`` y ``year``; ``response`` es el CSV
+    anual plano (con header extranjero, opcionalmente con BOM UTF-8). Se
+    extiende cada fila CSV con ``source_file`` y ``year`` (int).
+    """
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        raw_params = row.get("params")
+        if not response or not raw_params:
+            continue
+        try:
+            params = json.loads(raw_params)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        filename = params.get("filename")
+        year = params.get("year")
+        if not filename or year is None:
+            continue
+        text = response
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        try:
+            reader = csv.DictReader(io.StringIO(text))
+            for csv_row in reader:
+                doc: dict[str, Any] = dict(csv_row)
+                doc["source_file"] = filename
+                doc["year"] = int(year)
+                docs.append(doc)
+        except (csv.Error, TypeError, ValueError):
+            continue
+    return docs
+
+
+def _build_notam_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Construye documentos NOTAM a partir de filas Bronze.
+
+    ``response`` es JSON con ``{"snapshot_at": ISO, "layers": [{"raw":
+    <FeatureCollection GeoJSON>, "layer": int}]}``. Se genera un documento por
+    feature GeoJSON con ``feature`` tal cual, ``layer`` y ``snapshot_at``.
+    """
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        response = row.get("response")
+        if not response:
+            continue
+        try:
+            payload = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        snapshot_at = payload.get("snapshot_at")
+        if not snapshot_at:
+            continue
+        layers = payload.get("layers", [])
+        if not isinstance(layers, list):
+            continue
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            raw = layer.get("raw")
+            features = raw.get("features") if isinstance(raw, dict) else None
+            if not isinstance(features, list):
+                continue
+            for feature in features:
+                docs.append({
+                    "feature": feature,
+                    "layer": layer.get("layer"),
+                    "snapshot_at": snapshot_at,
+                })
+    return docs
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -403,6 +639,55 @@ def _read_bronze_aena_infovuelos(
     return aena_docs
 
 
+def _read_bronze_table(delta_root: str, table_name: str) -> list[dict[str, Any]]:
+    """Lee una tabla Bronze (Delta Lake) y devuelve sus filas como dicts.
+
+    Usa las mismas opciones de storage que el resto de lecturas del script;
+    si la tabla no existe devuelve una lista vacía (los collectores pueden no
+    haber corrido aún).
+    """
+    from deltalake import DeltaTable
+
+    table_uri = _build_table_uri(delta_root, "bronze", table_name)
+    logger.info("Leyendo Bronze %s: %s", table_name, table_uri)
+
+    try:
+        dt = DeltaTable(table_uri, storage_options=get_storage_options())
+    except Exception as exc:
+        logger.warning("No se pudo leer bronze/%s: %s", table_name, exc)
+        return []
+
+    table = dt.to_pyarrow_table()
+    rows = table.to_pylist()
+    logger.info("Bronze %s: %d filas", table_name, len(rows))
+    return rows
+
+
+def _read_bronze_metar(delta_root: str) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de METAR (``bronze/metar_awc``, append)."""
+    return _read_bronze_table(delta_root, "metar_awc")
+
+
+def _read_bronze_holidays_nager(delta_root: str) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de Nager.Date (``bronze/holidays_nager_date``, append)."""
+    return _read_bronze_table(delta_root, "holidays_nager_date")
+
+
+def _read_bronze_holidays_python(delta_root: str) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de python-holidays (``bronze/holidays_python``, snapshot)."""
+    return _read_bronze_table(delta_root, "holidays_python")
+
+
+def _read_bronze_eurocontrol(delta_root: str) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de EUROCONTROL PRU (``bronze/eurocontrol_pru``)."""
+    return _read_bronze_table(delta_root, "eurocontrol_pru")
+
+
+def _read_bronze_notam(delta_root: str) -> list[dict[str, Any]]:
+    """Lee la tabla Bronze de NOTAM (``bronze/notam_enaire``, snapshot)."""
+    return _read_bronze_table(delta_root, "notam_enaire")
+
+
 def _process_aena_hours(
     delta_root: str,
     pending_hours: list[datetime],
@@ -428,6 +713,188 @@ def _process_aena_hours(
         except Exception as exc:
             failures += 1
             logger.error("Error procesando hora AENA %s: %s", hour_key, exc)
+    return failures
+
+
+def _process_metar_rows(
+    rows: list[dict[str, Any]],
+    dry_run: bool,
+    date_prefix: str | None = None,
+) -> int:
+    """Procesa las horas METAR pendientes (agrupadas por fetched_at hora UTC).
+
+    Cada hora se lee y escribe de forma atómica: el checkpoint por hora solo se
+    marca tras una escritura correcta. Si una hora falla, no se checkpointea y
+    se reintenta en la siguiente ejecución. Devuelve el número de horas
+    fallidas. Con ``date_prefix`` (YYYY-MM-DD) solo se procesan horas de esa
+    fecha (backfill con ``--date``).
+    """
+    by_hour: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        fetched_at = row.get("fetched_at")
+        if not isinstance(fetched_at, datetime):
+            continue
+        hour_key = fetched_at.strftime("%Y-%m-%dT%H:00")
+        if date_prefix and not hour_key.startswith(date_prefix):
+            continue
+        by_hour.setdefault(hour_key, []).append(row)
+
+    checkpointed = get_checkpoint_set(CHECKPOINT_COLLECTION_METAR)
+    failures = 0
+    for hour_key in sorted(by_hour):
+        if hour_key in checkpointed:
+            continue
+        hour_rows = by_hour[hour_key]
+        try:
+            docs = _build_metar_docs(hour_rows)
+            if dry_run:
+                logger.info(
+                    "METAR: hour=%s rows=%d docs=%d (dry-run)",
+                    hour_key, len(hour_rows), len(docs),
+                )
+                continue
+            write_metar(docs)
+            add_to_checkpoint_set(CHECKPOINT_COLLECTION_METAR, hour_key)
+        except Exception as exc:
+            failures += 1
+            logger.error("Error procesando hora METAR %s: %s", hour_key, exc)
+    return failures
+
+
+def _process_holidays_rows(
+    rows: list[dict[str, Any]],
+    source: str,
+    builder: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+    dry_run: bool,
+) -> int:
+    """Procesa festivos pendientes agrupados por clave ``{source}_{year}``.
+
+    El año se extrae de ``json.loads(row["params"])["year"]``. Devuelve el
+    número de grupos fallidos; el checkpoint solo se marca tras escritura
+    correcta.
+    """
+    by_year: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        raw_params = row.get("params")
+        if not raw_params:
+            continue
+        try:
+            year = json.loads(raw_params).get("year")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if year is None:
+            continue
+        by_year.setdefault(f"{source}_{year}", []).append(row)
+
+    checkpointed = get_checkpoint_set(CHECKPOINT_COLLECTION_HOLIDAYS)
+    failures = 0
+    for key in sorted(by_year):
+        if key in checkpointed:
+            continue
+        group_rows = by_year[key]
+        try:
+            docs = builder(group_rows)
+            if dry_run:
+                logger.info(
+                    "Festivos: key=%s rows=%d docs=%d (dry-run)",
+                    key, len(group_rows), len(docs),
+                )
+                continue
+            write_holidays(docs)
+            add_to_checkpoint_set(CHECKPOINT_COLLECTION_HOLIDAYS, key)
+        except Exception as exc:
+            failures += 1
+            logger.error("Error procesando festivos %s: %s", key, exc)
+    return failures
+
+
+def _process_eurocontrol_rows(
+    rows: list[dict[str, Any]],
+    dry_run: bool,
+) -> int:
+    """Procesa filas EUROCONTROL pendientes agrupadas por ``{filename}_{year}``.
+
+    Devuelve el número de grupos fallidos; el checkpoint solo se marca tras
+    escritura correcta.
+    """
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        raw_params = row.get("params")
+        if not raw_params:
+            continue
+        try:
+            params = json.loads(raw_params)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        filename = params.get("filename")
+        year = params.get("year")
+        if not filename or year is None:
+            continue
+        by_key.setdefault(f"{filename}_{year}", []).append(row)
+
+    checkpointed = get_checkpoint_set(CHECKPOINT_COLLECTION_EUROCONTROL)
+    failures = 0
+    for key in sorted(by_key):
+        if key in checkpointed:
+            continue
+        group_rows = by_key[key]
+        try:
+            docs = _build_eurocontrol_docs(group_rows)
+            if dry_run:
+                logger.info(
+                    "EUROCONTROL: key=%s rows=%d docs=%d (dry-run)",
+                    key, len(group_rows), len(docs),
+                )
+                continue
+            write_eurocontrol_pru(docs)
+            add_to_checkpoint_set(CHECKPOINT_COLLECTION_EUROCONTROL, key)
+        except Exception as exc:
+            failures += 1
+            logger.error("Error procesando EUROCONTROL %s: %s", key, exc)
+    return failures
+
+
+def _process_notam_rows(
+    rows: list[dict[str, Any]],
+    dry_run: bool,
+) -> int:
+    """Procesa snapshots NOTAM pendientes (clave = ``snapshot_at``).
+
+    Devuelve el número de snapshots fallidos; el checkpoint solo se marca tras
+    escritura correcta.
+    """
+    by_snapshot: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        raw_response = row.get("response")
+        if not raw_response:
+            continue
+        try:
+            snapshot_at = json.loads(raw_response).get("snapshot_at")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not snapshot_at:
+            continue
+        by_snapshot.setdefault(str(snapshot_at), []).append(row)
+
+    checkpointed = get_checkpoint_set(CHECKPOINT_COLLECTION_NOTAM)
+    failures = 0
+    for key in sorted(by_snapshot):
+        if key in checkpointed:
+            continue
+        snapshot_rows = by_snapshot[key]
+        try:
+            docs = _build_notam_docs(snapshot_rows)
+            if dry_run:
+                logger.info(
+                    "NOTAM: snapshot_at=%s rows=%d docs=%d (dry-run)",
+                    key, len(snapshot_rows), len(docs),
+                )
+                continue
+            write_notam(docs)
+            add_to_checkpoint_set(CHECKPOINT_COLLECTION_NOTAM, key)
+        except Exception as exc:
+            failures += 1
+            logger.error("Error procesando NOTAM %s: %s", key, exc)
     return failures
 
 
@@ -516,6 +983,41 @@ def main(argv: list[str] | None = None) -> int:
         aena_failures = _process_aena_hours(delta_root, pending, args.dry_run)
         if aena_failures and not args.dry_run:
             exit_code = 1
+
+    # Ruta METAR: por hora UTC, checkpoint independiente (patrón AENA)
+    metar_rows = _read_bronze_metar(delta_root)
+    metar_failures = _process_metar_rows(
+        metar_rows, args.dry_run,
+        date_prefix=str(target_date) if target_date else None,
+    )
+    if metar_failures and not args.dry_run:
+        exit_code = 1
+
+    # Ruta festivos: Nager.Date + python-holidays (clave {source}_{year})
+    nager_rows = _read_bronze_holidays_nager(delta_root)
+    nager_failures = _process_holidays_rows(
+        nager_rows, "nager_date", _build_nager_docs, args.dry_run,
+    )
+    if nager_failures and not args.dry_run:
+        exit_code = 1
+    python_rows = _read_bronze_holidays_python(delta_root)
+    python_failures = _process_holidays_rows(
+        python_rows, "python_holidays", _build_python_holidays_docs, args.dry_run,
+    )
+    if python_failures and not args.dry_run:
+        exit_code = 1
+
+    # Ruta EUROCONTROL PRU: clave {filename}_{year}
+    eurocontrol_rows = _read_bronze_eurocontrol(delta_root)
+    eurocontrol_failures = _process_eurocontrol_rows(eurocontrol_rows, args.dry_run)
+    if eurocontrol_failures and not args.dry_run:
+        exit_code = 1
+
+    # Ruta NOTAM: clave snapshot_at (del payload de la respuesta)
+    notam_rows = _read_bronze_notam(delta_root)
+    notam_failures = _process_notam_rows(notam_rows, args.dry_run)
+    if notam_failures and not args.dry_run:
+        exit_code = 1
 
     close_silver()
     return exit_code
