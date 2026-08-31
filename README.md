@@ -161,6 +161,35 @@ python scripts/bronze_to_silver.py
 python scripts/silver_to_gold_entities.py
 ```
 
+### Aplicación web (frontend)
+
+La app está en `web/` (React + Vite + TypeScript). Consume la API de predicción
+(`GET /health`, `POST /predict/delay`, `POST /predict/eta`).
+
+- **Modo demo (por defecto, sin backend)**: usa datos simulados deterministas para
+  que la UI funcione de extremo a extremo sin API ni base de datos. El header
+  muestra "Demo (datos simulados)".
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173
+```
+
+- **Con la API real**: crea `.env` a partir de `.env.example` y pon
+  `VITE_USE_MOCK=false`. En desarrollo puedes usar `VITE_API_BASE_URL=/api`,
+  que el proxy de Vite reenvía a `http://localhost:8000` (evita el CORS, la API
+  no lo habilita). Si la API exige clave, define `VITE_API_KEY`.
+
+```bash
+cd web
+npm install
+# .env: VITE_USE_MOCK=false  VITE_API_BASE_URL=/api
+npm run dev
+```
+
+Build de producción: `npm run build` → `web/dist/`.
+
 ### Requisitos
 
 - Python 3.12+
