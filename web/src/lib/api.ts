@@ -3,6 +3,8 @@
 
 import type {
   ApiConfig,
+  AuthRequest,
+  AuthResponse,
   DelayFeatures,
   DelayResponse,
   EtaRequest,
@@ -26,7 +28,7 @@ export function resolveBaseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL as string | undefined) || DEFAULT_BASE_URL
 }
 
-export function useMock(): boolean {
+export function isMockMode(): boolean {
   const raw = import.meta.env.VITE_USE_MOCK
   // Default: mock activo salvo que se desactive explícitamente.
   return raw === undefined || raw === '' || raw === 'true' || raw === '1'
@@ -79,6 +81,20 @@ export async function predictDelay(features: DelayFeatures): Promise<DelayRespon
 
 export async function predictEta(req: EtaRequest): Promise<EtaResponse> {
   return request<EtaResponse>('/predict/eta', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function register(req: AuthRequest): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function login(req: AuthRequest): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login', {
     method: 'POST',
     body: JSON.stringify(req),
   })

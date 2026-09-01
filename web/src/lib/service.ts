@@ -1,9 +1,11 @@
 // Capa de servicio: decide entre API real y mock según configuración.
 // También deriva los "factores explicativos" indicativos a partir del formulario.
 
-import { fetchHealth, predictDelay, predictEta, useMock } from './api'
-import { mockDelay, mockEta, mockHealth } from './mock'
+import { fetchHealth, isMockMode, login as apiLogin, predictDelay, predictEta, register as apiRegister } from './api'
+import { mockAuth, mockDelay, mockEta, mockHealth } from './mock'
 import type {
+  AuthRequest,
+  AuthResponse,
   ConnectionStatus,
   DelayFeatures,
   DelayResponse,
@@ -28,7 +30,7 @@ export async function checkHealth(): Promise<{
   status: ConnectionStatus
   modelVersion: string | null
 }> {
-  if (useMock()) {
+  if (isMockMode()) {
     return { status: 'demo', modelVersion: mockHealth().model_version }
   }
 
@@ -48,7 +50,7 @@ export async function runPrediction(
   features: DelayFeatures,
   scheduledArrival: string,
 ): Promise<PredictionResult> {
-  if (useMock()) {
+  if (isMockMode()) {
     return {
       delay: mockDelay(features),
       eta: mockEta(scheduledArrival, features),
@@ -70,6 +72,29 @@ export async function runPrediction(
       factors: deriveFactors(features),
     }
   }
+}
+
+/**
+ * Registro de usuario. En modo mock devuelve una sesión sintética; en modo
+ * real llama a POST /auth/register y propaga los errores (409 email duplicado,
+ * 422 validación) para que la UI los muestre.
+ */
+export async function register(req: AuthRequest): Promise<AuthResponse> {
+  if (isMockMode()) {
+    return mockAuth(req)
+  }
+  return apiRegister(req)
+}
+
+/**
+ * Login de usuario. En modo mock devuelve una sesión sintética; en modo real
+ * llama a POST /auth/login y propaga los errores (401 credenciales inválidas).
+ */
+export async function login(req: AuthRequest): Promise<AuthResponse> {
+  if (isMockMode()) {
+    return mockAuth(req)
+  }
+  return apiLogin(req)
 }
 
 const DAY_NAMES = [

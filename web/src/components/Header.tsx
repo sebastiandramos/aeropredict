@@ -1,13 +1,15 @@
-import { Plane } from 'lucide-react'
-import type { ConnectionStatus } from '../lib/types'
+import { LogOut, Plane } from 'lucide-react'
+import type { ConnectionStatus, Session } from '../lib/types'
 import StatusBadge from './StatusBadge'
 
 interface HeaderProps {
   status: ConnectionStatus
   modelVersion: string | null
+  session: Session | null
+  onLogout: () => void
 }
 
-export default function Header({ status, modelVersion }: HeaderProps) {
+export default function Header({ status, modelVersion, session, onLogout }: HeaderProps) {
   return (
     <header className="header">
       <div className="header-inner">
@@ -20,7 +22,18 @@ export default function Header({ status, modelVersion }: HeaderProps) {
             <span className="brand-tagline">Predicción de retrasos de vuelos</span>
           </div>
         </div>
-        <StatusBadge status={status} modelVersion={modelVersion} />
+        <div className="header-actions">
+          {session && (
+            <div className="session">
+              <span className="session-email">{session.email}</span>
+              <button type="button" className="btn-ghost" onClick={onLogout}>
+                <LogOut size={16} aria-hidden="true" />
+                Salir
+              </button>
+            </div>
+          )}
+          <StatusBadge status={status} modelVersion={modelVersion} />
+        </div>
       </div>
     </header>
   )

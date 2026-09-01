@@ -41,3 +41,26 @@ export interface ApiConfig {
 }
 
 export type ConnectionStatus = 'checking' | 'connected' | 'demo' | 'error'
+
+// ===================================================================
+// Auth — registro y login (email + contraseña + JWT)
+// ===================================================================
+
+export interface AuthRequest {
+  email: string
+  password: string
+}
+
+export interface AuthResponse {
+  token: string
+  user_id: string
+  email: string
+  expires_in: number
+}
+
+/** Sesión persistida en localStorage (token + datos del usuario). */
+export interface Session {
+  token: string
+  userId: string
+  email: string
+}

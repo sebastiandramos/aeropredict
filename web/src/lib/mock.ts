@@ -2,6 +2,8 @@
 // Se usan cuando VITE_USE_MOCK=true (por defecto) o cuando /health no responde.
 
 import type {
+  AuthRequest,
+  AuthResponse,
   DelayFeatures,
   DelayResponse,
   EtaResponse,
@@ -12,6 +14,19 @@ export const MOCK_MODEL_VERSION = '0.1.0'
 
 export function mockHealth(): HealthResponse {
   return { status: 'ok', model_version: MOCK_MODEL_VERSION }
+}
+
+/**
+ * Respuesta mock determinista de auth (registro/login). Devuelve un token
+ * sintético estable por email para que la sesión funcione sin backend.
+ */
+export function mockAuth(req: AuthRequest): AuthResponse {
+  return {
+    token: `mock-token-${req.email}`,
+    user_id: `mock-user-${hashString(req.email)}`,
+    email: req.email,
+    expires_in: 86400,
+  }
 }
 
 // Hash determinista a partir de una cadena (para variar el resultado por ruta).
