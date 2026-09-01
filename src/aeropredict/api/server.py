@@ -16,15 +16,30 @@ from time import perf_counter
 
 import mlflow
 import pandas as pd
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, status
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.security import APIKeyHeader
 
 from .models import (
+    AlertResponse,
+    AuthResponse,
     DelayPredictionRequest,
     DelayPredictionResponse,
     ETAPredictionRequest,
     ETAPredictionResponse,
     HealthResponse,
+    LoginRequest,
+    RegisterRequest,
+    SubscriptionCreateRequest,
+    SubscriptionResponse,
 )
 
 # PostgreSQL connection for prediction archival
@@ -374,3 +389,233 @@ async def predict_eta(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         ) from exc
+
+
+# ===================================================================
+# Auth — registro y login (email + contraseña + JWT)
+# ===================================================================
+#
+# Los imports de bcrypt, persistencia y tokens son perezosos (dentro de las
+# funciones) para que el paquete API siga siendo importable sin los extras
+# ``auth`` instalados, igual que el patrón de psycopg2 en _log_prediction_to_db.
+#
+# TTL del token (minutos) — debe coincidir con el ``expires_in`` devuelto.
+_TOKEN_TTL_MINUTES = 1440
+
+
+def _hash_password(password: str) -> str:
+    """Devuelve el hash bcrypt de una contraseña en claro."""
+    import bcrypt  # lazy import (extra ``auth``)
+
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    """Comprueba una contraseña en claro contra su hash bcrypt almacenado."""
+    import bcrypt  # lazy import (extra ``auth``)
+
+    return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+
+
+@app.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+async def register(payload: RegisterRequest) -> AuthResponse:
+    """Registra un usuario con email + contraseña y devuelve un JWT.
+
+    - Valida el payload (email válido, contraseña >= 8 caracteres).
+    - Hashea la contraseña con bcrypt (nunca se almacena en claro).
+    - Si el email ya existe devuelve 409.
+    - En éxito devuelve 201 con un token JWT recién emitido.
+    """
+    from aeropredict.app.persistence import create_user
+    from aeropredict.auth.tokens import create_token
+
+    password_hash = _hash_password(payload.password)
+    user = create_user(payload.email, password_hash, "email")
+    if user is None:
+        LOGGER.warning("Registro rechazado: email ya registrado %s", payload.email)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    token = create_token(user["user_id"], expires_in_minutes=_TOKEN_TTL_MINUTES)
+    LOGGER.info("Usuario registrado: user_id=%s email=%s", user["user_id"], payload.email)
+    return AuthResponse(
+        token=token,
+        user_id=user["user_id"],
+        email=payload.email,
+        expires_in=_TOKEN_TTL_MINUTES,
+    )
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(payload: LoginRequest) -> AuthResponse:
+    """Autentica un usuario con email + contraseña y devuelve un JWT.
+
+    Usa el MISMO mensaje de error (401 "Invalid credentials") tanto para
+    usuario inexistente como para contraseña incorrecta, para no permitir
+    enumeración de usuarios.
+    """
+    from aeropredict.app.persistence import get_user_by_email
+    from aeropredict.auth.tokens import create_token
+
+    user = get_user_by_email(payload.email)
+    stored_hash = user.get("password_hash") if user is not None else None
+    if stored_hash is None or not _verify_password(payload.password, stored_hash):
+        LOGGER.warning("Login fallido para email=%s", payload.email)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    token = create_token(user["user_id"], expires_in_minutes=_TOKEN_TTL_MINUTES)
+    LOGGER.info("Login ok: user_id=%s email=%s", user["user_id"], payload.email)
+    return AuthResponse(
+        token=token,
+        user_id=user["user_id"],
+        email=payload.email,
+        expires_in=_TOKEN_TTL_MINUTES,
+    )
+
+
+# ===================================================================
+# Suscripciones y alertas — "mis vuelos" (auth-scoped)
+# ===================================================================
+#
+# Todos los endpoints exigen un Bearer token válido (dependencia
+# ``_get_current_user_id``). La verificación delega en ``tokens.verify_token``
+# (T4), que es agnóstica del emisor: un futuro proveedor OAuth que emita el
+# MISMO JWT funciona sin cambios. El scope por usuario se aplica SIEMPRE con el
+# ``user_id`` del token — nunca con datos del body.
+#
+# Los imports de persistencia son perezosos (dentro de las funciones), igual
+# que en los endpoints de auth.
+
+
+def _get_current_user_id(
+    authorization: str | None = Header(default=None),
+) -> str:
+    """Extrae y verifica el Bearer token; devuelve el ``user_id`` o 401.
+
+    Cualquier fallo (header ausente, esquema no-Bearer, token inválido o
+    caducado) devuelve 401 con el mismo mensaje, sin distinguir el motivo.
+    """
+    from aeropredict.auth.tokens import verify_token
+
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+    user_id = verify_token(token.strip())
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+    return user_id
+
+
+@app.post(
+    "/alerts/subscriptions",
+    response_model=SubscriptionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_subscription_endpoint(
+    payload: SubscriptionCreateRequest,
+    user_id: str = Depends(_get_current_user_id),
+) -> SubscriptionResponse:
+    """Crea (o actualiza) una suscripción de vuelo para el usuario autenticado.
+
+    ``create_subscription`` hace upsert por (user_id, flight_key): re-seguir un
+    vuelo actualiza la suscripción existente en lugar de duplicar.
+    """
+    from aeropredict.app.persistence import create_subscription
+
+    sub = create_subscription(
+        user_id=user_id,
+        flight_key=payload.flight_key,
+        flight_number=payload.flight_number,
+        from_airport=payload.from_airport,
+        to_airport=payload.to_airport,
+        schedule_local=payload.schedule_local,
+        threshold_minutes=payload.threshold_minutes,
+        email=payload.email,
+    )
+    LOGGER.info(
+        "Suscripción creada/actualizada: user_id=%s flight_key=%s",
+        user_id,
+        payload.flight_key,
+    )
+    return SubscriptionResponse(**sub)
+
+
+@app.get("/alerts/subscriptions", response_model=list[SubscriptionResponse])
+async def list_subscriptions_endpoint(
+    user_id: str = Depends(_get_current_user_id),
+) -> list[SubscriptionResponse]:
+    """Lista las suscripciones de vuelo del usuario autenticado."""
+    from aeropredict.app.persistence import list_subscriptions
+
+    subs = list_subscriptions(user_id)
+    return [SubscriptionResponse(**s) for s in subs]
+
+
+@app.delete(
+    "/alerts/subscriptions/{flight_key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_subscription_endpoint(
+    flight_key: str,
+    user_id: str = Depends(_get_current_user_id),
+) -> None:
+    """Elimina una suscripción del usuario autenticado (404 si no existe)."""
+    from aeropredict.app.persistence import delete_subscription
+
+    if not delete_subscription(user_id, flight_key):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription not found",
+        )
+    LOGGER.info(
+        "Suscripción eliminada: user_id=%s flight_key=%s", user_id, flight_key
+    )
+
+
+@app.get("/alerts", response_model=list[AlertResponse])
+async def list_alerts_endpoint(
+    read: bool | None = None,
+    user_id: str = Depends(_get_current_user_id),
+) -> list[AlertResponse]:
+    """Lista las alertas del usuario autenticado (opcional ``?read=false``)."""
+    from aeropredict.app.persistence import list_alerts
+
+    alerts = list_alerts(user_id, read=read)
+    return [AlertResponse(**a) for a in alerts]
+
+
+@app.patch("/alerts/{alert_id}/read", response_model=AlertResponse)
+async def mark_alert_read_endpoint(
+    alert_id: int,
+    user_id: str = Depends(_get_current_user_id),
+) -> AlertResponse:
+    """Marca una alerta del usuario autenticado como leída (404 si no es suya)."""
+    from aeropredict.app.persistence import list_alerts, mark_alert_read
+
+    alert = next(
+        (a for a in list_alerts(user_id) if a["id"] == alert_id),
+        None,
+    )
+    if alert is None or not mark_alert_read(alert_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Alert not found",
+        )
+    alert["read"] = True
+    return AlertResponse(**alert)
