@@ -161,9 +161,114 @@ python scripts/bronze_to_silver.py
 python scripts/silver_to_gold_entities.py
 ```
 
+### Aplicación web (frontend)
+
+La app está en `web/` (React + Vite + TypeScript). Consume la API de predicción
+(`GET /health`, `POST /predict/delay`, `POST /predict/eta`).
+
+- **Modo demo (por defecto, sin backend)**: usa datos simulados deterministas para
+  que la UI funcione de extremo a extremo sin API ni base de datos. El header
+  muestra "Demo (datos simulados)".
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173
+```
+
+- **Con la API real**: crea `.env` a partir de `.env.example` y pon
+  `VITE_USE_MOCK=false`. En desarrollo puedes usar `VITE_API_BASE_URL=/api`,
+  que el proxy de Vite reenvía a `http://localhost:8000` (evita el CORS, la API
+  no lo habilita). Si la API exige clave, define `VITE_API_KEY`.
+
+```bash
+cd web
+npm install
+# .env: VITE_USE_MOCK=false  VITE_API_BASE_URL=/api
+npm run dev
+```
+
+Build de producción: `npm run build` → `web/dist/`.
+
 ### Requisitos
 
 - Python 3.12+
 - MongoDB Atlas (o local) — `MONGODB_URI` en Doppler
 - PostgreSQL Neon (o local) — `POSTGRES_URI` en Doppler
 - Paquete instalado: `pip install -e .`
+
+## Estado del proyecto
+
+Seguimiento por tarjeta del tablero Trello
+([tfm-aeropredict](https://trello.com/b/YfMRBhUT/tfm-aeropredict)). Leyenda:
+✅ hecho · 🟡 en curso (rama de trabajo) · ⏳ pendiente (bloqueado por terceros).
+
+### Implementación / Fuentes de Datos — ✅ completado
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Buscar APIs/webs útiles | ✅ | 8 fuentes integradas (ver [colectores](#colectores-de-datos-complementarios-job-extract-de-pipelineyml)) |
+| Revisar Open-Meteo | ✅ | `collect_weather.py` + `aeropredict.sources.openmeteo` |
+| Comparar fuentes encontradas | ✅ | `docs/analisis_prediccion_retrasos.md` |
+| Seleccionar fuentes finales | ✅ | `docs/analisis_prediccion_retrasos.md` |
+| Integrar nuevas fuentes viables | ✅ | OpenSky, AENA, METAR, festivos, EUROCONTROL, OurAirports, NOTAM, aviación (PR #7, PR #9) |
+
+### Data Pipeline — ✅ 3/5 · 🟡 2/5 (en curso)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Bronze / Silver / Gold | ✅ | `bronze_to_silver.py`, `silver_to_gold.py`, `silver_to_gold_entities.py` |
+| MongoDB / PostgreSQL / R2 | ✅ | CI + `docker-compose.yml` (local) |
+| Feature Store | ✅ | `build_feature_store.py` → `gold.feature_store` |
+| Validación de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+| Limpieza de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+
+### Modelos — 🟡 en curso (compañero)
+
+| Tarjeta | Estado |
+|---|---|
+| Lista de variables/features | 🟡 `feat/ml-pipeline` — pendiente de conclusions |
+| Preparar dataset de entrenamiento | 🟡 `feat/ml-pipeline` |
+| Entrenar primer modelo | 🟢 implementado en `feat/ml-pipeline` (entrenado con datos mock) |
+| Analizar resultados | ⏳ pendiente de conclusiones |
+
+### App / Producto — ✅ completado (PR #10)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Definir qué verá el usuario (pantalla) | ✅ | `web/` (React + Vite) — ver [Aplicación web](#aplicación-web-frontend) |
+| Input de vuelo / ruta | ✅ | selector origen→destino + aerolínea + fecha/hora + distancia auto |
+| Mostrar probabilidad de retraso | ✅ | panel de resultado: severidad, minutos, confianza, ETA |
+| Mostrar factores explicativos | ✅ | lista indicativa (fin de semana, hora punta, ruta, meteorología) |
+
+La app funciona en modo demo (mock-first) y está lista para conectarse a la API de
+predicción de `feat/ml-pipeline` en cuanto esté disponible (`.env` con
+`VITE_USE_MOCK=false`).
+
+### Documentación — ✅ 2/5 · 🟡 3/5 (dependen del modelo)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Arquitectura de datos | ✅ | este README + `AGENTS.md` |
+| Fuentes de datos | ✅ | este README + `AGENTS.md` |
+| Features del modelo | 🟡 | pendiente de conclusions del modelo (plantilla propuesta en `docs/`) |
+| Limitaciones | 🟡 | pendiente de conclusions del modelo |
+| Resultados del modelo | 🟡 | pendiente de conclusions del modelo |
+
+### Negocio — ✅ documentado (Tomás)
+
+Documento completo en `TFM - Modelo Negocio.md` (raíz del repo): oportunidad de
+negocio, clientes y propuesta de valor, Business Model Canvas, DAFO, cinco
+fuerzas de Porter, modelo de ingresos y precios, presupuesto y cuenta de
+resultados del año 1, aspectos legales y riesgos, conclusión de viabilidad y
+bibliografía. Pendiente de revisión del tutor.
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Business Model Canvas | ✅ | `TFM - Modelo Negocio.md` §3 |
+| Propuesta de valor | ✅ | `TFM - Modelo Negocio.md` §2 |
+| Cuenta de resultados | ✅ | `TFM - Modelo Negocio.md` §7 |
+| Clientes objetivo | ✅ | `TFM - Modelo Negocio.md` §2 |
+| Riesgos del negocio | ✅ | `TFM - Modelo Negocio.md` §8 |
+| Costes e ingresos | ✅ | `TFM - Modelo Negocio.md` §6–7 |
+| Competidores | ✅ | `TFM - Modelo Negocio.md` §5 |

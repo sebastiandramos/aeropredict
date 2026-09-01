@@ -17,6 +17,9 @@ eggs/
 lib/
 lib64/
 parts/
+# Re-include the frontend's source lib dir (ignored by the generic `lib/` above)
+!web/src/lib/
+!web/src/lib/**
 sdist/
 var/
 wheels/
