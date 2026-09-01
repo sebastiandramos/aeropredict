@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import Header from './components/Header'
+import Header, { type AppView } from './components/Header'
 import FlightForm from './components/FlightForm'
 import ResultPanel, { type ResultState } from './components/ResultPanel'
 import AuthForm from './components/AuthForm'
+import MyFlights from './components/MyFlights'
 import { checkHealth, runPrediction } from './lib/service'
 import type { AuthResponse, ConnectionStatus, DelayFeatures, Session } from './lib/types'
 import './App.css'
@@ -37,6 +38,7 @@ export default function App() {
   const [modelVersion, setModelVersion] = useState<string | null>(null)
   const [result, setResult] = useState<ResultState>({ kind: 'empty' })
   const [session, setSession] = useState<Session | null>(() => loadSession())
+  const [view, setView] = useState<AppView>('predictor')
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +74,14 @@ export default function App() {
     clearSession()
     setSession(null)
     setResult({ kind: 'empty' })
+    setView('predictor')
+  }
+
+  function handleSessionExpired() {
+    clearSession()
+    setSession(null)
+    setResult({ kind: 'empty' })
+    setView('predictor')
   }
 
   return (
@@ -80,30 +90,36 @@ export default function App() {
         status={status}
         modelVersion={modelVersion}
         session={session}
+        view={view}
+        onViewChange={setView}
         onLogout={handleLogout}
       />
 
       <main className="main">
         {session ? (
-          <>
-            <div className="hero">
-              <h1 className="hero-title">Predicción de retrasos de vuelos</h1>
-              <p className="hero-subtitle">
-                Introduce los datos de tu vuelo y obtén una estimación del retraso
-                previsto, la hora de llegada y los factores que influyen en el
-                resultado.
-              </p>
-            </div>
+          view === 'my-flights' ? (
+            <MyFlights onSessionExpired={handleSessionExpired} />
+          ) : (
+            <>
+              <div className="hero">
+                <h1 className="hero-title">Predicción de retrasos de vuelos</h1>
+                <p className="hero-subtitle">
+                  Introduce los datos de tu vuelo y obtén una estimación del retraso
+                  previsto, la hora de llegada y los factores que influyen en el
+                  resultado.
+                </p>
+              </div>
 
-            <div className="layout">
-              <section className="panel form-panel" aria-label="Datos del vuelo">
-                <h2 className="panel-title">Datos del vuelo</h2>
-                <FlightForm onSubmit={handleSubmit} loading={result.kind === 'loading'} />
-              </section>
+              <div className="layout">
+                <section className="panel form-panel" aria-label="Datos del vuelo">
+                  <h2 className="panel-title">Datos del vuelo</h2>
+                  <FlightForm onSubmit={handleSubmit} loading={result.kind === 'loading'} />
+                </section>
 
-              <ResultPanel state={result} />
-            </div>
-          </>
+                <ResultPanel state={result} />
+              </div>
+            </>
+          )
         ) : (
           <div className="auth-layout">
             <section className="panel auth-panel" aria-label="Acceso a tu cuenta">

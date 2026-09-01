@@ -45,10 +45,26 @@ Build: `npm run build` → `web/dist/`. Lint: `npm run lint`.
 | POST | `/predict/eta` | `{scheduled_arrival, features}` | `{estimated_arrival_time, confidence, delay_component, disruption_likely}` |
 | POST | `/auth/register` | `{email, password}` | `201 → {token, user_id, email, expires_in}` · `409` email ya registrado · `422` validación |
 | POST | `/auth/login` | `{email, password}` | `200 → {token, user_id, email, expires_in}` · `401` credenciales inválidas |
+| GET | `/alerts/subscriptions` | — (Bearer) | `200 → Subscription[]` · `401` sin token válido |
+| POST | `/alerts/subscriptions` | `SubscriptionCreateRequest` (Bearer) | `201 → Subscription` · `401` · `422` validación |
+| DELETE | `/alerts/subscriptions/{flight_key}` | — (Bearer) | `204` · `401` · `404` no existe |
+| GET | `/alerts` | `?read=` opcional (Bearer) | `200 → Alert[]` · `401` |
+| PATCH | `/alerts/{alert_id}/read` | — (Bearer) | `200 → Alert` · `401` · `404` no es tuya |
 
 `DelayFeatures`: `hour_of_day`, `day_of_week`, `airline`, `route_distance`
 (obligatorios); `aircraft_type`, `aircraft_manufacturer`, `aircraft_operator`,
 `weather_temperature_2m`, `weather_precipitation` (opcionales).
+
+`SubscriptionCreateRequest`: `flight_key`, `flight_number`, `from_airport`,
+`to_airport`, `schedule_local`, `threshold_minutes` (default 60), `email`
+(opcional). `Subscription` añade `user_id`, `created_at`, `updated_at`.
+`Alert`: `id`, `user_id`, `flight_key`, `severity`, `delay_minutes_predicted`,
+`factor_jsonb`, `email_sent`, `read`, `created_at`.
+
+Los endpoints de suscripciones y alertas exigen un token Bearer (el mismo JWT
+de la sesión, clave `aeropredict.token`). En modo demo (`VITE_USE_MOCK`) se
+usan implementaciones deterministas en memoria sembradas con una suscripción y
+una alerta de ejemplo para que la vista «Mis vuelos» no esté vacía.
 
 ## Sesión
 

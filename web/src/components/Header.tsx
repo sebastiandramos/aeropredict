@@ -2,14 +2,25 @@ import { LogOut, Plane } from 'lucide-react'
 import type { ConnectionStatus, Session } from '../lib/types'
 import StatusBadge from './StatusBadge'
 
+export type AppView = 'predictor' | 'my-flights'
+
 interface HeaderProps {
   status: ConnectionStatus
   modelVersion: string | null
   session: Session | null
+  view: AppView
+  onViewChange: (view: AppView) => void
   onLogout: () => void
 }
 
-export default function Header({ status, modelVersion, session, onLogout }: HeaderProps) {
+export default function Header({
+  status,
+  modelVersion,
+  session,
+  view,
+  onViewChange,
+  onLogout,
+}: HeaderProps) {
   return (
     <header className="header">
       <div className="header-inner">
@@ -23,6 +34,26 @@ export default function Header({ status, modelVersion, session, onLogout }: Head
           </div>
         </div>
         <div className="header-actions">
+          {session && (
+            <nav className="nav-tabs" aria-label="Vistas">
+              <button
+                type="button"
+                className={`nav-tab ${view === 'predictor' ? 'nav-tab-active' : ''}`}
+                aria-current={view === 'predictor' ? 'page' : undefined}
+                onClick={() => onViewChange('predictor')}
+              >
+                Predictor
+              </button>
+              <button
+                type="button"
+                className={`nav-tab ${view === 'my-flights' ? 'nav-tab-active' : ''}`}
+                aria-current={view === 'my-flights' ? 'page' : undefined}
+                onClick={() => onViewChange('my-flights')}
+              >
+                Mis vuelos
+              </button>
+            </nav>
+          )}
           {session && (
             <div className="session">
               <span className="session-email">{session.email}</span>

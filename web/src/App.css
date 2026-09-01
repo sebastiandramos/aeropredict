@@ -867,3 +867,163 @@
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+
+/* ---------- Nav tabs (Predictor | Mis vuelos) ---------- */
+.nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.nav-tab {
+  padding: 0.5rem 0.875rem;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.nav-tab:hover {
+  color: var(--color-text-strong);
+}
+
+.nav-tab-active {
+  background: var(--color-surface);
+  color: var(--color-text-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.nav-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ---------- Mis vuelos ---------- */
+.my-flights {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.my-flights-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.field-hint {
+  font-size: var(--text-small);
+  color: var(--color-text-secondary);
+}
+
+.follow-panel {
+  border-color: var(--color-accent);
+}
+
+.follow-result {
+  align-self: flex-start;
+}
+
+/* ---------- Alerts banner ---------- */
+.alerts-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+/* ---------- Subscription list ---------- */
+.subscription-list,
+.alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.subscription-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+
+.subscription-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.subscription-flight {
+  font-size: var(--text-subtitle);
+  font-weight: 700;
+  color: var(--color-text-strong);
+}
+
+.subscription-route {
+  font-size: var(--text-body);
+  color: var(--color-text-strong);
+}
+
+.subscription-meta {
+  font-size: var(--text-small);
+  color: var(--color-text-secondary);
+}
+
+/* ---------- Alert list ---------- */
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+
+.alert-item-read {
+  opacity: 0.65;
+}
+
+.alert-severity {
+  flex-shrink: 0;
+}
+
+.alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.alert-flight {
+  font-size: var(--text-subtitle);
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+
+.alert-meta {
+  font-size: var(--text-small);
+  color: var(--color-text-secondary);
+}

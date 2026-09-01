@@ -2,8 +2,26 @@
 // También deriva los "factores explicativos" indicativos a partir del formulario.
 
 import { fetchHealth, isMockMode, login as apiLogin, predictDelay, predictEta, register as apiRegister } from './api'
-import { mockAuth, mockDelay, mockEta, mockHealth } from './mock'
+import {
+  createSubscription as apiCreateSubscription,
+  deleteSubscription as apiDeleteSubscription,
+  getAlerts as apiGetAlerts,
+  getSubscriptions as apiGetSubscriptions,
+  markAlertRead as apiMarkAlertRead,
+} from './api'
+import {
+  mockAuth,
+  mockCreateSubscription,
+  mockDelay,
+  mockDeleteSubscription,
+  mockEta,
+  mockGetAlerts,
+  mockGetSubscriptions,
+  mockHealth,
+  mockMarkAlertRead,
+} from './mock'
 import type {
+  Alert,
   AuthRequest,
   AuthResponse,
   ConnectionStatus,
@@ -11,6 +29,8 @@ import type {
   DelayResponse,
   EtaResponse,
   HealthResponse,
+  Subscription,
+  SubscriptionCreateRequest,
 } from './types'
 
 export interface Factor {
@@ -95,6 +115,51 @@ export async function login(req: AuthRequest): Promise<AuthResponse> {
     return mockAuth(req)
   }
   return apiLogin(req)
+}
+
+// ===================================================================
+// Suscripciones y alertas — "mis vuelos"
+// ===================================================================
+// En modo mock se usan las implementaciones deterministas en memoria; en modo
+// real se llama a la API y se propagan los errores (401 sesión caducada, 404
+// no encontrado) para que la UI los distinga.
+
+export async function getSubscriptions(): Promise<Subscription[]> {
+  if (isMockMode()) {
+    return mockGetSubscriptions()
+  }
+  return apiGetSubscriptions()
+}
+
+export async function createSubscription(
+  req: SubscriptionCreateRequest,
+): Promise<Subscription> {
+  if (isMockMode()) {
+    return mockCreateSubscription(req)
+  }
+  return apiCreateSubscription(req)
+}
+
+export async function deleteSubscription(flightKey: string): Promise<void> {
+  if (isMockMode()) {
+    mockDeleteSubscription(flightKey)
+    return
+  }
+  await apiDeleteSubscription(flightKey)
+}
+
+export async function getAlerts(read?: boolean): Promise<Alert[]> {
+  if (isMockMode()) {
+    return mockGetAlerts(read)
+  }
+  return apiGetAlerts(read)
+}
+
+export async function markAlertRead(alertId: number): Promise<Alert> {
+  if (isMockMode()) {
+    return mockMarkAlertRead(alertId)
+  }
+  return apiMarkAlertRead(alertId)
 }
 
 const DAY_NAMES = [

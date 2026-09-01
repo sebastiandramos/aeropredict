@@ -64,3 +64,45 @@ export interface Session {
   userId: string
   email: string
 }
+
+// ===================================================================
+// Suscripciones y alertas — "mis vuelos" (auth-scoped)
+// ===================================================================
+// Los nombres de campo siguen snake_case para reflejar EXACTAMENTE el
+// contrato del backend (src/aeropredict/api/models.py), igual que el resto
+// de tipos de este archivo (user_id, predicted_delay_minutes, …).
+
+export interface SubscriptionCreateRequest {
+  flight_key: string
+  flight_number: string
+  from_airport: string
+  to_airport: string
+  schedule_local: string
+  threshold_minutes: number
+  email?: string | null
+}
+
+export interface Subscription {
+  user_id: string
+  flight_key: string
+  flight_number: string
+  from_airport: string
+  to_airport: string
+  schedule_local: string
+  threshold_minutes: number
+  email?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Alert {
+  id: number
+  user_id: string
+  flight_key: string
+  severity: string
+  delay_minutes_predicted?: number | null
+  factor_jsonb?: Record<string, unknown> | null
+  email_sent: boolean
+  read: boolean
+  created_at: string
+}
