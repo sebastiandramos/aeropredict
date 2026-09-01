@@ -1,0 +1,45 @@
+name: Mis vuelos - Alertas
+
+# Revisa periódicamente las suscripciones de vuelo de los usuarios
+# (MongoDB `user_flight_subscriptions`), predice el retraso con el modelo
+# MLflow y escribe alertas en `gold.alerts` (PostgreSQL). El envío de email
+# queda APAGADO por defecto: solo ocurre si el notifier está habilitado
+# (NOTIFICATIONS_ENABLED=true + SMTP/Resend configurados en Doppler). Sin
+# ellos, el workflow solo persiste alertas en `gold.alerts` y loguea.
+#
+# Frecuencia: cada 30 min (minutos 17 y 47 UTC), offset para no chocar con
+# pipeline.yml (06:30/19:30) ni data-collectors.yml (06:00). La ventana de
+# idempotencia de 60 min en check_alerts.py hace que solapamientos entre
+# runs sean seguros (no duplica alertas del mismo vuelo).
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"  # cada 30 min (minutos 17 y 47 UTC)
+  workflow_dispatch:          # trigger manual para testing
+
+concurrency:
+  group: mis-vuelos-alertas
+  cancel-in-progress: false
+
+jobs:
+  check-alerts:
+    name: Check alerts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -e ".[api,ml]"
+
+      - uses: dopplerhq/cli-action@v3
+
+      - name: Revisar suscripciones y generar alertas
+        run: doppler run -- python scripts/check_alerts.py
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
