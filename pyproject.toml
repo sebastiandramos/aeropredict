@@ -46,6 +46,10 @@ api = [
     "uvicorn[standard]>=0.29",
     "python-dateutil>=2.9",
 ]
+auth = [
+    "PyJWT>=2.8",
+    "bcrypt>=4",
+]
 
 [tool.ruff]
 line-length = 100
