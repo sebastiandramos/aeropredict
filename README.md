@@ -255,14 +255,20 @@ predicción de `feat/ml-pipeline` en cuanto esté disponible (`.env` con
 | Limitaciones | 🟡 | pendiente de conclusions del modelo |
 | Resultados del modelo | 🟡 | pendiente de conclusions del modelo |
 
-### Negocio — ⏳ pendiente (Tomás)
+### Negocio — ✅ documentado (Tomás)
 
-| Tarjeta | Estado |
-|---|---|
-| Business Model Canvas | ⏳ |
-| Propuesta de valor | ⏳ |
-| Cuenta de resultados | ⏳ (borrador: `AeroPredict_Balance_Anio_0.xlsx`) |
-| Clientes objetivo | ⏳ |
-| Riesgos del negocio | ⏳ |
-| Costes e ingresos | ⏳ |
-| Competidores | ⏳ |
+Documento completo en `TFM - Modelo Negocio.md` (raíz del repo): oportunidad de
+negocio, clientes y propuesta de valor, Business Model Canvas, DAFO, cinco
+fuerzas de Porter, modelo de ingresos y precios, presupuesto y cuenta de
+resultados del año 1, aspectos legales y riesgos, conclusión de viabilidad y
+bibliografía. Pendiente de revisión del tutor.
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Business Model Canvas | ✅ | `TFM - Modelo Negocio.md` §3 |
+| Propuesta de valor | ✅ | `TFM - Modelo Negocio.md` §2 |
+| Cuenta de resultados | ✅ | `TFM - Modelo Negocio.md` §7 |
+| Clientes objetivo | ✅ | `TFM - Modelo Negocio.md` §2 |
+| Riesgos del negocio | ✅ | `TFM - Modelo Negocio.md` §8 |
+| Costes e ingresos | ✅ | `TFM - Modelo Negocio.md` §6–7 |
+| Competidores | ✅ | `TFM - Modelo Negocio.md` §5 |
