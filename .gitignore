@@ -231,6 +231,7 @@ AGENTS.md
 
 # Temporal / debug scripts (ad-hoc, no forman parte de la pipeline)
 check_*.py
+!scripts/check_alerts.py
 _check_*.py
 _status.py
 save_*.py
