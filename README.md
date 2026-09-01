@@ -196,3 +196,73 @@ Build de producción: `npm run build` → `web/dist/`.
 - MongoDB Atlas (o local) — `MONGODB_URI` en Doppler
 - PostgreSQL Neon (o local) — `POSTGRES_URI` en Doppler
 - Paquete instalado: `pip install -e .`
+
+## Estado del proyecto
+
+Seguimiento por tarjeta del tablero Trello
+([tfm-aeropredict](https://trello.com/b/YfMRBhUT/tfm-aeropredict)). Leyenda:
+✅ hecho · 🟡 en curso (rama de trabajo) · ⏳ pendiente (bloqueado por terceros).
+
+### Implementación / Fuentes de Datos — ✅ completado
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Buscar APIs/webs útiles | ✅ | 8 fuentes integradas (ver [colectores](#colectores-de-datos-complementarios-job-extract-de-pipelineyml)) |
+| Revisar Open-Meteo | ✅ | `collect_weather.py` + `aeropredict.sources.openmeteo` |
+| Comparar fuentes encontradas | ✅ | `docs/analisis_prediccion_retrasos.md` |
+| Seleccionar fuentes finales | ✅ | `docs/analisis_prediccion_retrasos.md` |
+| Integrar nuevas fuentes viables | ✅ | OpenSky, AENA, METAR, festivos, EUROCONTROL, OurAirports, NOTAM, aviación (PR #7, PR #9) |
+
+### Data Pipeline — ✅ 3/5 · 🟡 2/5 (en curso)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Bronze / Silver / Gold | ✅ | `bronze_to_silver.py`, `silver_to_gold.py`, `silver_to_gold_entities.py` |
+| MongoDB / PostgreSQL / R2 | ✅ | CI + `docker-compose.yml` (local) |
+| Feature Store | ✅ | `build_feature_store.py` → `gold.feature_store` |
+| Validación de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+| Limpieza de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+
+### Modelos — 🟡 en curso (compañero)
+
+| Tarjeta | Estado |
+|---|---|
+| Lista de variables/features | 🟡 `feat/ml-pipeline` — pendiente de conclusions |
+| Preparar dataset de entrenamiento | 🟡 `feat/ml-pipeline` |
+| Entrenar primer modelo | 🟢 implementado en `feat/ml-pipeline` (entrenado con datos mock) |
+| Analizar resultados | ⏳ pendiente de conclusiones |
+
+### App / Producto — ✅ completado (PR #10)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Definir qué verá el usuario (pantalla) | ✅ | `web/` (React + Vite) — ver [Aplicación web](#aplicación-web-frontend) |
+| Input de vuelo / ruta | ✅ | selector origen→destino + aerolínea + fecha/hora + distancia auto |
+| Mostrar probabilidad de retraso | ✅ | panel de resultado: severidad, minutos, confianza, ETA |
+| Mostrar factores explicativos | ✅ | lista indicativa (fin de semana, hora punta, ruta, meteorología) |
+
+La app funciona en modo demo (mock-first) y está lista para conectarse a la API de
+predicción de `feat/ml-pipeline` en cuanto esté disponible (`.env` con
+`VITE_USE_MOCK=false`).
+
+### Documentación — ✅ 2/5 · 🟡 3/5 (dependen del modelo)
+
+| Tarjeta | Estado | Dónde |
+|---|---|---|
+| Arquitectura de datos | ✅ | este README + `AGENTS.md` |
+| Fuentes de datos | ✅ | este README + `AGENTS.md` |
+| Features del modelo | 🟡 | pendiente de conclusions del modelo (plantilla propuesta en `docs/`) |
+| Limitaciones | 🟡 | pendiente de conclusions del modelo |
+| Resultados del modelo | 🟡 | pendiente de conclusions del modelo |
+
+### Negocio — ⏳ pendiente (Tomás)
+
+| Tarjeta | Estado |
+|---|---|
+| Business Model Canvas | ⏳ |
+| Propuesta de valor | ⏳ |
+| Cuenta de resultados | ⏳ (borrador: `AeroPredict_Balance_Anio_0.xlsx`) |
+| Clientes objetivo | ⏳ |
+| Riesgos del negocio | ⏳ |
+| Costes e ingresos | ⏳ |
+| Competidores | ⏳ |
