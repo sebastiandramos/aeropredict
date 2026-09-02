@@ -1,0 +1,42 @@
+version: "3.8"
+
+# Grafana + PostgreSQL monitoring stack for AeroPredict
+# Usage:
+#   docker compose -f docker-compose.monitoring.yml up -d
+#   Access Grafana at http://localhost:3000 (admin/admin)
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aeropredict-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/aeropredict-ml.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./../.omo/dashboards:/var/lib/grafana/dashboards:ro
+      - ./../.omo/dashboards/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: aeropredict-grafana-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aeropredict
+      POSTGRES_USER: aeropredict
+      POSTGRES_PASSWORD: aeropredict
+    ports:
+      - "5433:5432"  # Non-conflict with main PostgreSQL on 5432
+    volumes:
+      - grafana-pg-data:/var/lib/postgresql/data
+
+volumes:
+  grafana-data:
+  grafana-pg-data:

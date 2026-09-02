@@ -17,6 +17,9 @@ eggs/
 lib/
 lib64/
 parts/
+# Re-include the frontend's source lib dir (ignored by the generic `lib/` above)
+!web/src/lib/
+!web/src/lib/**
 sdist/
 var/
 wheels/
@@ -217,46 +220,33 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .conda
-.omo
+.omo/*
+!.omo/dashboards/
+!.omo/dashboards/**
 data/*
 !data/mock/
 !data/mock/**
 tmp/
 AGENTS.md
+
+# Temporal / debug scripts (ad-hoc, no forman parte de la pipeline)
+check_*.py
+!scripts/check_alerts.py
+_check_*.py
+_status.py
+save_*.py
+fetch_*.py
+/test_*.py
+scripts/compact_delta.py
+scripts/migrate_bronze_partitioning.py
 .vscode/settings.json
-
-# Temporary / scratch venvs
+nul
 .venv_temp/
+*.pptx
+*.docx
+*.xlsx
 
-# ML tracking & model artifacts
+# ML artifacts
 mlruns/
 models/
 
-# Ad-hoc debug / exploration scripts
-_check_cp.py
-_status.py
-check_all_checkpoints.py
-check_aviationstack.py
-check_bronze_dates.py
-check_checkpoint.py
-check_credits.py
-check_matches.py
-check_raw_checkpoint.py
-check_schedules.py
-fetch_100_flights.py
-save_and_match.py
-save_simple.py
-save_to_bronze.py
-test_avstack.py
-test_avstack_free.py
-test_key.py
-scripts/_check_atlas_dbs_tmp.py
-scripts/_check_atlas_size_tmp.py
-scripts/_inspect_bronze_tmp.py
-scripts/_inspect_r2_tmp.py
-YfMRBhUT - tfm-aeropredict.json
-
-# Presentation / deliverable files
-*.pptx
-*.xlsx
-*.docx

@@ -1,0 +1,20 @@
+apiVersion: 1
+
+datasources:
+  - name: AeroPredict PostgreSQL
+    type: postgres
+    uid: aeropredict-postgres
+    access: proxy
+    url: postgres:5432
+    user: aeropredict
+    secureJsonData:
+      password: aeropredict
+    database: aeropredict
+    isDefault: true
+    editable: true
+    jsonData:
+      postgresVersion: 1600
+      sslmode: disable
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: 14400
