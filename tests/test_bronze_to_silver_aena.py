@@ -37,6 +37,10 @@ _process_aena_hours = bronze_to_silver._process_aena_hours
 main = bronze_to_silver.main
 CHECKPOINT_COLLECTION = bronze_to_silver.CHECKPOINT_COLLECTION
 CHECKPOINT_COLLECTION_AENA = bronze_to_silver.CHECKPOINT_COLLECTION_AENA
+CHECKPOINT_COLLECTION_METAR = bronze_to_silver.CHECKPOINT_COLLECTION_METAR
+CHECKPOINT_COLLECTION_HOLIDAYS = bronze_to_silver.CHECKPOINT_COLLECTION_HOLIDAYS
+CHECKPOINT_COLLECTION_EUROCONTROL = bronze_to_silver.CHECKPOINT_COLLECTION_EUROCONTROL
+CHECKPOINT_COLLECTION_NOTAM = bronze_to_silver.CHECKPOINT_COLLECTION_NOTAM
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -119,24 +123,48 @@ def _monkeypatch_deltatable(
     aena_rows: list[dict[str, Any]] | None = None,
 ) -> None:
     """Mock ``deltalake.DeltaTable``: opensky → *flights_table*, AENA →
-    *aena_rows* table, weather → schema-correct empty table."""
+    *aena_rows* table, other sources → schema-correct empty tables."""
 
     aena_table = _aena_delta_table(aena_rows or [])
-    weather_table = pa.table(
-        {
-            "fetched_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
-            "response": pa.array([], type=pa.string()),
-        }
-    )
+
+    def _empty_table(*fields: pa.Field) -> pa.Table:
+        return pa.table({f.name: pa.array([], type=f.type) for f in fields})
+
+    _source_tables: dict[str, pa.Table] = {
+        "weather_openmeteo": _empty_table(
+            pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+            pa.field("response", pa.string()),
+        ),
+        "aena_infovuelos": aena_table,
+        "metar_awc": _empty_table(
+            pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+            pa.field("response", pa.string()),
+        ),
+        "holidays_nager_date": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "holidays_python": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "eurocontrol_pru": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "notam_enaire": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+    }
 
     class MockDeltaTable:
         def __init__(self, table_uri: str, storage_options: Any = None) -> None:
-            if "weather_openmeteo" in table_uri:
-                self._table = weather_table
-            elif "aena_infovuelos" in table_uri:
-                self._table = aena_table
-            else:
-                self._table = flights_table
+            self._table = flights_table  # default: flights
+            for key, tbl in _source_tables.items():
+                if key in table_uri:
+                    self._table = tbl
+                    break
 
         def to_pyarrow_table(self) -> pa.Table:
             return self._table
@@ -473,6 +501,10 @@ class TestAenaMainIntegration:
         checkpoints = {
             CHECKPOINT_COLLECTION: set(),
             CHECKPOINT_COLLECTION_AENA: aena_checkpoints or set(),
+            CHECKPOINT_COLLECTION_METAR: set(),
+            CHECKPOINT_COLLECTION_HOLIDAYS: set(),
+            CHECKPOINT_COLLECTION_EUROCONTROL: set(),
+            CHECKPOINT_COLLECTION_NOTAM: set(),
         }
         monkeypatch.setattr(bronze_to_silver, "get_checkpoint_set", lambda col: checkpoints[col])
         monkeypatch.setattr(

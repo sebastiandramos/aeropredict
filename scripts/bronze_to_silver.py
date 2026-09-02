@@ -780,7 +780,7 @@ def _process_holidays_rows(
             continue
         try:
             year = json.loads(raw_params).get("year")
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError, AttributeError):
             continue
         if year is None:
             continue
@@ -824,7 +824,7 @@ def _process_eurocontrol_rows(
             continue
         try:
             params = json.loads(raw_params)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError, AttributeError):
             continue
         filename = params.get("filename")
         year = params.get("year")
@@ -870,7 +870,7 @@ def _process_notam_rows(
             continue
         try:
             snapshot_at = json.loads(raw_response).get("snapshot_at")
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError, AttributeError):
             continue
         if not snapshot_at:
             continue

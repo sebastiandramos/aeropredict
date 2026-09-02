@@ -129,32 +129,54 @@ def _monkeypatch_deltatable(
     """Replace ``deltalake.DeltaTable`` with a mock.
 
     *table* is returned for ``bronze/opensky`` reads; schema-correct **empty**
-    tables are returned for ``bronze/weather_openmeteo`` and
-    ``bronze/aena_infovuelos``, which ``main()`` also reads (they have
-    ``fetched_at`` instead of ``ingestion_date``).
+    tables are returned for ``bronze/weather_openmeteo``,
+    ``bronze/aena_infovuelos``, ``bronze/metar_awc``, ``bronze/holidays_*``,
+    ``bronze/eurocontrol_pru`` and ``bronze/notam_enaire``, which ``main()``
+    also reads.
     """
 
     def _empty_table(*fields: pa.Field) -> pa.Table:
         return pa.table({f.name: pa.array([], type=f.type) for f in fields})
 
-    weather_table = _empty_table(
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("response", pa.string()),
-    )
-    aena_table = _empty_table(
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("params", pa.string()),
-        pa.field("response", pa.string()),
-    )
+    _source_tables: dict[str, pa.Table] = {
+        "weather_openmeteo": _empty_table(
+            pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+            pa.field("response", pa.string()),
+        ),
+        "aena_infovuelos": _empty_table(
+            pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "metar_awc": _empty_table(
+            pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+            pa.field("response", pa.string()),
+        ),
+        "holidays_nager_date": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "holidays_python": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "eurocontrol_pru": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+        "notam_enaire": _empty_table(
+            pa.field("params", pa.string()),
+            pa.field("response", pa.string()),
+        ),
+    }
 
     class MockDeltaTable:
         def __init__(self, table_uri: str, storage_options: Any = None) -> None:
-            if "weather_openmeteo" in table_uri:
-                self._table = weather_table
-            elif "aena_infovuelos" in table_uri:
-                self._table = aena_table
-            else:
-                self._table = table
+            self._table = table  # default: flights
+            for key, tbl in _source_tables.items():
+                if key in table_uri:
+                    self._table = tbl
+                    break
 
         def to_pyarrow_table(self) -> pa.Table:
             return self._table
