@@ -228,7 +228,6 @@ def create_subscription(
         "schedule_local": schedule_local,
         "threshold_minutes": threshold_minutes,
         "email": email,
-        "created_at": now,
         "updated_at": now,
     }
     col.update_one(
@@ -236,7 +235,7 @@ def create_subscription(
         {"$set": doc, "$setOnInsert": {"created_at": now}},
         upsert=True,
     )
-    return doc
+    return col.find_one({"user_id": user_id, "flight_key": flight_key}) or doc
 
 
 def list_subscriptions(user_id: str) -> list[dict[str, Any]]:
