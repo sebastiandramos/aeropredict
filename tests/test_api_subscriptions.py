@@ -114,12 +114,14 @@ class _FakeStore:
             alerts = [a for a in alerts if a["read"] == read]
         return alerts
 
-    def mark_alert_read(self, alert_id: int) -> bool:
+    def mark_alert_read(
+        self, alert_id: int, user_id: str
+    ) -> dict[str, Any] | None:
         for alert in self._alerts:
-            if alert["id"] == alert_id:
+            if alert["id"] == alert_id and alert["user_id"] == user_id:
                 alert["read"] = True
-                return True
-        return False
+                return dict(alert)
+        return None
 
 
 # ===================================================================
@@ -392,7 +394,7 @@ def test_list_alerts_scoped_per_user(client: TestClient, store: _FakeStore) -> N
 def test_list_alerts_filter_by_read(client: TestClient, store: _FakeStore) -> None:
     store.insert_alert("user-1", "fk1", "alta", 45.0, {"weather": True})
     store.insert_alert("user-1", "fk2", "moderada", 20.0, {})
-    store.mark_alert_read(2)
+    store.mark_alert_read(2, "user-1")
 
     unread = client.get("/alerts", params={"read": "false"}, headers=_auth("user-1"))
     read = client.get("/alerts", params={"read": "true"}, headers=_auth("user-1"))

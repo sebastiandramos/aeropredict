@@ -149,6 +149,24 @@ class _FakeCursorPG:
             self.description = [("id",)]
             return
         if query.strip().upper().startswith("UPDATE"):
+            # mark_alert_read (RETURNING *): emula el scope por user_id.
+            if "RETURNING *" in query:
+                alert_owner = params[1] if params and len(params) > 1 else None
+                if alert_owner == "u1":
+                    self._rows = [
+                        (1, "u1", "fk1", "alta", 45.0, {"weather": True}, False, True, "2026-09-01"),
+                    ]
+                    self.rowcount = 1
+                    self.description = [
+                        ("id",), ("user_id",), ("flight_key",), ("severity",),
+                        ("delay_minutes_predicted",), ("factor_jsonb",), ("email_sent",),
+                        ("read",), ("created_at",),
+                    ]
+                    return
+                self._rows = []
+                self.rowcount = 0
+                self.description = None
+                return
             self.rowcount = 1
             self.description = None
             return
@@ -373,4 +391,15 @@ def test_list_alerts_filter_by_read(fake_pg):
 def test_mark_alert_read(fake_pg):
     alert_id = persistence.insert_alert("u1", "fk1", "alta", 45.0, {"weather": True})
 
-    assert persistence.mark_alert_read(alert_id) is True
+    updated = persistence.mark_alert_read(alert_id, "u1")
+    assert updated is not None
+    assert updated["id"] == alert_id
+    assert updated["read"] is True
+
+
+def test_mark_alert_read_other_user_returns_none(fake_pg):
+    alert_id = persistence.insert_alert("u1", "fk1", "alta", 45.0, {"weather": True})
+
+    assert persistence.mark_alert_read(alert_id, "u2") is None
+    unread = persistence.list_alerts("u1", read=False)
+    assert len(unread) == 1

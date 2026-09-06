@@ -357,21 +357,28 @@ def list_alerts(user_id: str, read: bool | None = None) -> list[dict[str, Any]]:
         return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
-def mark_alert_read(alert_id: int) -> bool:
-    """Marca una alerta como leída.
+def mark_alert_read(alert_id: int, user_id: str) -> dict[str, Any] | None:
+    """Marca una alerta de un usuario como leída (atómicamente, scope por user).
 
     Args:
         alert_id: Id de la alerta.
+        user_id: Id del usuario propietario (evita marcar alertas ajenas).
 
     Returns:
-        ``True`` si se actualizó, ``False`` si la alerta no existe.
+        El dict de la alerta actualizada, o ``None`` si no existe
+        o pertenece a otro usuario.
     """
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE gold.alerts SET read = TRUE WHERE id = %s",
-            (alert_id,),
+            "UPDATE gold.alerts SET read = TRUE "
+            "WHERE id = %s AND user_id = %s RETURNING *",
+            (alert_id, user_id),
         )
-        updated = cur.rowcount
+        row = cur.fetchone()
+        updated = None
+        if row is not None and cur.description is not None:
+            cols = [desc[0] for desc in cur.description]
+            updated = dict(zip(cols, row, strict=True))
     conn.commit()
-    return updated > 0
+    return updated

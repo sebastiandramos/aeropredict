@@ -5,9 +5,11 @@ Model is attached to app.state.model and app.state.model_version.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -148,19 +150,46 @@ app = FastAPI(lifespan=lifespan)
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+# Rate limiter en memoria para /predict*: ventana deslizante de 60s por IP.
+_PREDICT_RATE_LIMIT = int(os.environ.get("PREDICT_RATE_LIMIT", "60"))
+_rate_hits: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
 
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
-    """Validate API key on prediction endpoints if API_KEY env var is set."""
-    api_key_required = os.environ.get("API_KEY")
-    if api_key_required and request.url.path.startswith("/predict"):
-        provided_key = request.headers.get("X-API-Key")
-        if not provided_key or provided_key != api_key_required:
-            return Response(
-                content='{"detail":"Invalid or missing API key"}',
-                status_code=401,
-                media_type="application/json",
-            )
+    """Rate limit + API key en /predict* (API_KEY es opcional).
+
+    - Rate limit por IP (ventana deslizante de 60s, PREDICT_RATE_LIMIT).
+    - Si API_KEY está definida, exige X-API-Key con comparación en
+      tiempo constante (hmac.compare_digest).
+    """
+    if request.url.path.startswith("/predict"):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        with _rate_lock:
+            hits = [t for t in _rate_hits.get(client_ip, []) if now - t < 60.0]
+            if len(hits) >= _PREDICT_RATE_LIMIT:
+                _rate_hits[client_ip] = hits
+                return Response(
+                    content='{"detail":"Rate limit exceeded"}',
+                    status_code=429,
+                    media_type="application/json",
+                )
+            hits.append(now)
+            _rate_hits[client_ip] = hits
+
+        api_key_required = os.environ.get("API_KEY")
+        if api_key_required:
+            provided_key = request.headers.get("X-API-Key")
+            if not provided_key or not hmac.compare_digest(
+                provided_key, api_key_required
+            ):
+                return Response(
+                    content='{"detail":"Invalid or missing API key"}',
+                    status_code=401,
+                    media_type="application/json",
+                )
     response = await call_next(request)
     return response
 
@@ -606,16 +635,13 @@ async def mark_alert_read_endpoint(
     user_id: str = Depends(_get_current_user_id),
 ) -> AlertResponse:
     """Marca una alerta del usuario autenticado como leída (404 si no es suya)."""
-    from aeropredict.app.persistence import list_alerts, mark_alert_read
+    from aeropredict.app.persistence import mark_alert_read
 
-    alert = next(
-        (a for a in list_alerts(user_id) if a["id"] == alert_id),
-        None,
-    )
-    if alert is None or not mark_alert_read(alert_id):
+    # UPDATE atómico scoped por user_id: no hay TOCTOU entre listar y marcar.
+    alert = mark_alert_read(alert_id, user_id)
+    if alert is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Alert not found",
         )
-    alert["read"] = True
     return AlertResponse(**alert)
