@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
-
 
 DROP_COLS = [
     "delay_target",
@@ -46,7 +44,7 @@ def _safe_read_parquet(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def _prepare_features(df: pd.DataFrame) -> (pd.DataFrame, List[str]):
+def _prepare_features(df: pd.DataFrame) -> (pd.DataFrame, list[str]):
     # Drop listed non-feature columns if present
     cols = [c for c in df.columns if c not in DROP_COLS]
 
@@ -65,7 +63,7 @@ def _prepare_features(df: pd.DataFrame) -> (pd.DataFrame, List[str]):
                 X[c] = X[c].fillna("UNKNOWN").astype(str)
 
     # Encode categorical features (all string/object-like columns) to integers (stable mapping via factorize)
-    feature_names: List[str] = list(X.columns)
+    feature_names: list[str] = list(X.columns)
     obj_cols = [
         c
         for c in X.columns
@@ -78,7 +76,7 @@ def _prepare_features(df: pd.DataFrame) -> (pd.DataFrame, List[str]):
     return X, feature_names
 
 
-def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     err = y_true - y_pred
     mse = float(np.mean(err ** 2))
     rmse = float(np.sqrt(mse))

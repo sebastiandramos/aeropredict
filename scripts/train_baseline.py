@@ -11,21 +11,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import sys
 
 # allow importing sibling modules in scripts/ even when it's not a package
 _scripts_root = str(Path(__file__).resolve().parent)
 if _scripts_root not in sys.path:
     sys.path.insert(0, _scripts_root)
-from train_baseline_helpers import _safe_read_parquet, _prepare_features, _metrics
-
+from train_baseline_helpers import _metrics, _prepare_features, _safe_read_parquet
 
 # defaults / paths
 DEFAULT_DATA_DIR = Path("data/processed")
@@ -141,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     metrics_with_meta = {
         "created_at": datetime.now(UTC).isoformat(),
         "seed": seed,
-        "counts": {"train": int(len(y_train)), "val": int(len(y_val)), "test": int(len(y_test))},
+        "counts": {"train": len(y_train), "val": len(y_val), "test": len(y_test)},
         "metrics": metrics,
     }
     metrics_path.write_text(json.dumps(metrics_with_meta, indent=2))
@@ -184,9 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     test_mae = metrics["test"]["mae"]
     test_r2 = metrics["test"]["r2"]
     print(
-        "Baseline LightGBM: RMSE={:.2f} min, MAE={:.2f} min, R²={:.3f} on test ({})".format(
-            test_rmse, test_mae, test_r2, len(y_test)
-        )
+        f"Baseline LightGBM: RMSE={test_rmse:.2f} min, MAE={test_mae:.2f} min, R²={test_r2:.3f} on test ({len(y_test)})"
     )
 
     return 0

@@ -13,23 +13,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import optuna
 import pandas as pd
 
-
 # allow importing sibling modules in scripts/
 _scripts_root = str(Path(__file__).resolve().parent)
 if _scripts_root not in sys.path:
     sys.path.insert(0, _scripts_root)
-from train_baseline_helpers import _safe_read_parquet, _prepare_features, _metrics  # type: ignore
-
+from train_baseline_helpers import _metrics, _prepare_features, _safe_read_parquet  # type: ignore
 
 DEFAULT_DATA_DIR = Path("data/processed")
 DEFAULT_OUTPUT_DIR = Path("models")
@@ -53,7 +51,7 @@ def _load_splits(data_dir: Path, dry_run: bool = False) -> tuple[pd.DataFrame, p
     return train_df, val_df, test_df
 
 
-def _prepare_Xy_for_model(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, List[str]]:
+def _prepare_Xy_for_model(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, list[str]]:
     X, feature_names = _prepare_features(df)
     y = df["delay_target"].astype(float).to_numpy()
     return X, y, feature_names
@@ -78,9 +76,9 @@ def _objective_factory(X_train: pd.DataFrame, y_train: np.ndarray, seed: int):
         }
 
         kf = KFold(n_splits=3, shuffle=True, random_state=seed)
-        rmses: List[float] = []
-        maes: List[float] = []
-        r2s: List[float] = []
+        rmses: list[float] = []
+        maes: list[float] = []
+        r2s: list[float] = []
 
         for train_idx, valid_idx in kf.split(X_train):
             X_tr = X_train.iloc[train_idx]
@@ -198,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Starting Optuna study for {trials} trials (seed={seed})")
     start_time = time.time()
-    trial_results: List[Dict[str, Any]] = []
+    trial_results: list[dict[str, Any]] = []
 
     for t in range(trials):
         trial = study.ask()

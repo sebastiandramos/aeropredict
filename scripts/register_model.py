@@ -25,13 +25,12 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("register_model")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-def _read_json(path: Path) -> Optional[dict]:
+def _read_json(path: Path) -> dict | None:
     if not path.exists():
         return None
     try:
@@ -90,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     client = MlflowClient(tracking_uri=mlflow.get_tracking_uri())
 
     # Find best run from mlruns (prefer tracked runs). We'll search experiments.
-    best_run_id: Optional[str] = None
+    best_run_id: str | None = None
     best_cv_rmse = float("inf")
     try:
         # search across all experiments
@@ -154,8 +153,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 # Fallback: use mlflow.lightgbm to log model from local file
                 if best_model_file.exists():
-                    import mlflow.lightgbm as lgb_mlflow
                     import lightgbm as lgb
+                    import mlflow.lightgbm as lgb_mlflow
 
                     booster = lgb.Booster(model_file=str(best_model_file.resolve()))
                     with mlflow.start_run():
