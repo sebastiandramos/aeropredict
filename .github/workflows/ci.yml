@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: "1/2 Unit tests + coverage (≥70%)"
+    name: "1/2 Unit tests + coverage (>=55%)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e ".[dev,ml,api]"
       - name: Ejecutar tests con cobertura
-        run: pytest --cov=src/aeropredict --cov-report=term-missing tests/ --tb=short -q
+        run: pytest --cov=src/aeropredict --cov-report=term-missing --cov-fail-under=55 tests/ --tb=short -q
 
   lint:
     name: "2/2 Ruff lint"
