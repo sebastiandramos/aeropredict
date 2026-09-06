@@ -195,13 +195,23 @@ export default function MyFlights({ onSessionExpired }: MyFlightsProps) {
 
     setFollowLoading(true)
     try {
+      // El backend (check_alerts._build_features) parsea schedule_local (UTC ISO)
+      // y recomputa hour_of_day/day_of_week UTC. Usamos getUTC* aquí para que la
+      // predicción al seguir el vuelo coincida con la del cron de alertas.
       const features: DelayFeatures = {
-        hour_of_day: departure.getHours(),
-        day_of_week: (departure.getDay() + 6) % 7, // 0 = lunes
+        hour_of_day: departure.getUTCHours(),
+        day_of_week: (departure.getUTCDay() + 6) % 7, // 0 = lunes
         airline: follow.flightNumber.replace(/[0-9]/g, '').toUpperCase() || 'XX',
         route_distance: routeDistance,
       }
-      const prediction = await runPrediction(features, departure.toISOString())
+      // Llegada estimada = salida + tiempo de vuelo (heurística: ~800 km/h de
+      // crucero + 45 min de rodaje). Sin esto, la ETA trataría la hora de
+      // salida como hora de llegada.
+      const cruiseHours = routeDistance / 800
+      const estArrival = new Date(
+        departure.getTime() + Math.round(cruiseHours * 3600_000) + 45 * 60_000,
+      )
+      const prediction = await runPrediction(features, estArrival.toISOString())
       const delayMinutes = prediction.delay.predicted_delay_minutes
       const severity = severityFor(delayMinutes)
 
