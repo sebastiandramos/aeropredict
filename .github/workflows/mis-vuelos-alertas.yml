@@ -11,6 +11,12 @@ name: Mis vuelos - Alertas
 # pipeline.yml (06:30/19:30) ni data-collectors.yml (06:00). La ventana de
 # idempotencia de 60 min en check_alerts.py hace que solapamientos entre
 # runs sean seguros (no duplica alertas del mismo vuelo).
+#
+# El modelo MLflow se resuelve desde Doppler: si existen
+# MLFLOW_TRACKING_URI + MLFLOW_MODEL_URI en el proyecto Doppler, `doppler run`
+# las inyecta y check_alerts carga el modelo registrado. Sin ellas (runner
+# efímero, sin estado), check_alerts loguea un warning y sale con exit 0:
+# el cron nunca "falla" por falta de modelo, pero tampoco genera alertas.
 
 on:
   schedule:
