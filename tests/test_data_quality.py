@@ -72,10 +72,10 @@ def _make_flight_doc_dict(
     icao24: str = "abc123",
     callsign: str | None = "ABC123",
     first_seen: datetime | None = NOW,
-    last_seen: datetime | None | object = _SENTINEL,
+    last_seen: datetime | object | None = _SENTINEL,
     est_departure_airport: str | None = "LEMD",
     est_arrival_airport: str | None = "LEBL",
-    flight_date: datetime | None | object = _SENTINEL,
+    flight_date: datetime | object | None = _SENTINEL,
     **extra: Any,
 ) -> dict[str, Any]:
     """Create a ``FlightDocument``-compatible dict (Silver schema).

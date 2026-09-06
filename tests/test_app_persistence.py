@@ -154,7 +154,17 @@ class _FakeCursorPG:
                 alert_owner = params[1] if params and len(params) > 1 else None
                 if alert_owner == "u1":
                     self._rows = [
-                        (1, "u1", "fk1", "alta", 45.0, {"weather": True}, False, True, "2026-09-01"),
+                        (
+                            1,
+                            "u1",
+                            "fk1",
+                            "alta",
+                            45.0,
+                            {"weather": True},
+                            False,
+                            True,
+                            "2026-09-01",
+                        ),
                     ]
                     self.rowcount = 1
                     self.description = [
