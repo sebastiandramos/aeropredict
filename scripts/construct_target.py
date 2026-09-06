@@ -18,15 +18,14 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
-import sys
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-
 
 EVIDENCE_DIR = Path(".omo/evidence")
 FIG_DIR = Path("reports/figures")
@@ -107,7 +106,7 @@ def summarize_and_save(df: pd.DataFrame, out_parquet: Path) -> dict:
     stats = {}
     delays = df["delay_target"].dropna()
     if len(delays) > 0:
-        stats["count"] = int(len(delays))
+        stats["count"] = len(delays)
         stats["mean"] = float(np.mean(delays))
         stats["std"] = float(np.std(delays, ddof=1))
         stats["min"] = float(np.min(delays))

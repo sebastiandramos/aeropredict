@@ -19,16 +19,15 @@ import json
 import logging
 import os
 import random
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
-from psycopg2.extras import RealDictCursor
 import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from aeropredict.opensky.logging_config import setup_daily_logger
-
 
 EVIDENCE_LOG = Path(".omo/evidence/task-12-export.log")
 NOTEPAD = Path(".omo/notepads/aeropredict-gap-closure/learnings.md")
@@ -50,9 +49,9 @@ def _connect_db(db_url: str | None) -> psycopg2.extensions.connection:
 def _query_feature_store(conn: psycopg2.extensions.connection, date_start: str | None, date_end: str | None) -> pd.DataFrame:
     cur = conn.cursor(cursor_factory=RealDictCursor)
     sql = "SELECT * FROM gold.feature_store"
-    params: List[Any] = []
+    params: list[Any] = []
     if date_start or date_end:
-        where_clauses: List[str] = []
+        where_clauses: list[str] = []
         if date_start:
             where_clauses.append("flight_date >= %s")
             params.append(date_start)
@@ -69,8 +68,8 @@ def _query_feature_store(conn: psycopg2.extensions.connection, date_start: str |
     return df
 
 
-def _mock_row(airport_choices: List[str]) -> Dict[str, Any]:
-    now = datetime.now(timezone.utc)
+def _mock_row(airport_choices: list[str]) -> dict[str, Any]:
+    now = datetime.now(UTC)
     dep = random.choice(airport_choices)
     arr = random.choice([a for a in airport_choices if a != dep])
     hour = random.randint(0, 23)
@@ -123,10 +122,10 @@ def _generate_mock_dataframe(n: int) -> pd.DataFrame:
     return df
 
 
-def _metadata_for_df(df: pd.DataFrame, date_start: str | None, date_end: str | None) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {}
-    meta["row_count"] = int(len(df))
-    meta["feature_count"] = int(len(df.columns))
+def _metadata_for_df(df: pd.DataFrame, date_start: str | None, date_end: str | None) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    meta["row_count"] = len(df)
+    meta["feature_count"] = len(df.columns)
     meta["features"] = list(df.columns.astype(str))
     meta["date_range"] = {"start": date_start, "end": date_end}
     nulls = {}
@@ -202,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         df.to_csv(csv_path, index=False)
         logger.info("Wrote csv: %s", csv_path)
 
-        _append_notepad(f"[{datetime.now(tz=timezone.utc).isoformat()}] export_ml_dataset wrote {len(df)} rows to {parquet_path}")
+        _append_notepad(f"[{datetime.now(tz=UTC).isoformat()}] export_ml_dataset wrote {len(df)} rows to {parquet_path}")
 
     except Exception as exc:  # Log and write to evidence
         logger.exception("Export failed: %s", exc)

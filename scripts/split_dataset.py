@@ -25,11 +25,9 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-
 
 DEFAULT_INPUT = Path("data/processed/target_dataset.parquet")
 DEFAULT_OUTPUT_DIR = Path("data/processed")
@@ -52,7 +50,7 @@ def _run_export_mock(out_path: Path, rows: int) -> Path:
     return out_path
 
 
-def _find_datetime_column(df: pd.DataFrame) -> Optional[str]:
+def _find_datetime_column(df: pd.DataFrame) -> str | None:
     candidates = [
         # precise engineered columns first
         "scheduled_arrival_dt",
@@ -189,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     test_df = df.iloc[n_train + n_val :].copy()
 
     # Prepare split summary
-    def date_range_for(subdf: pd.DataFrame) -> Optional[tuple[str, str]]:
+    def date_range_for(subdf: pd.DataFrame) -> tuple[str, str] | None:
         if used_temporal is None and "__temporal_dt" not in subdf.columns:
             return None
         col = "__temporal_dt"

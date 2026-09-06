@@ -17,15 +17,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List
-
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
 
 import lightgbm as lgb
-
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 ROOT = Path(".")
 REPORT_DIR = ROOT / "reports" / "figures"
@@ -69,7 +65,7 @@ def lgb_importance(df: pd.DataFrame) -> pd.Series:
     return imp
 
 
-def combined_selection(corr: pd.Series, imp: pd.Series, top_k: int = 18) -> List[str]:
+def combined_selection(corr: pd.Series, imp: pd.Series, top_k: int = 18) -> list[str]:
     # Normalize and combine
     c1 = corr.reindex(imp.index).fillna(0.0)
     c1 = (c1 - c1.min()) / (c1.max() - c1.min() + 1e-9)
@@ -110,7 +106,7 @@ def save_figures(df: pd.DataFrame, corr: pd.Series, imp: pd.Series) -> None:
     (EVIDENCE_DIR / "task-13-importance.png").write_bytes(p2.read_bytes())
 
 
-def write_selected(selected: List[str], scores: Dict[str, float]) -> None:
+def write_selected(selected: list[str], scores: dict[str, float]) -> None:
     SELECTED_PATH.parent.mkdir(parents=True, exist_ok=True)
     out = {"selected_features": selected, "scores": scores, "method": "correlation+importance"}
     SELECTED_PATH.write_text(json.dumps(out, indent=2, sort_keys=True))
