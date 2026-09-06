@@ -197,6 +197,23 @@ Build de producción: `npm run build` → `web/dist/`.
 - PostgreSQL Neon (o local) — `POSTGRES_URI` en Doppler
 - Paquete instalado: `pip install -e .`
 
+### Variables Doppler para la app de alertas (producción)
+
+Tras el merge de la app "Mis vuelos + alertas", además de `MONGODB_URI` y
+`POSTGRES_URI` el proyecto Doppler de `aeropredict` debe contener:
+
+| Variable | Para qué | Sin ella |
+|---|---|---|
+| `JWT_SECRET` | Firmar/verificar tokens JWT (HS256) en los endpoints `/auth/*` | Auth devuelve 500 (en `AEROPREDICT_ENV=dev` se usa un fallback inseguro solo para desarrollo) |
+| `MLFLOW_TRACKING_URI` | Localizar el servidor/registro MLflow | `check_alerts` y `POST /predict/*` no pueden cargar el modelo |
+| `MLFLOW_MODEL_URI` | Resolver el modelo registrado (ej. `models:/delay-predictor/production`) | Ídem |
+
+> **Importante**: el modelo se registra en un runner efímero de GitHub Actions
+> (`model-training.yml`), así que sin `MLFLOW_TRACKING_URI`/`MLFLOW_MODEL_URI`
+> en Doppler el cron de alertas (`mis-vuelos-alertas.yml`) sale con **exit 0 y un
+> warning, pero no genera alertas**. Define ambas antes de dar por operativas
+> las alertas.
+
 ## Estado del proyecto
 
 Seguimiento por tarjeta del tablero Trello

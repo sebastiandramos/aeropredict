@@ -91,5 +91,7 @@ Secrets injected via Doppler (`doppler run`) or `.env` fallback. Expected vars:
 - `OPENSKY_CLIENT_ID_{NAME}` / `OPENSKY_CLIENT_SECRET_{NAME}` — multiple accounts supported, pool rotates in 429
 - `MONGODB_URI` / `POSTGRES_URI` — omit for Docker local defaults
 - `OPENSKY_DELTA_ROOT` — `data/raw` (local), `s3://aeropredict-landing-zone` (CI/R2)
+- `JWT_SECRET` — required by auth (HS256 token signing); without it `/auth/*` returns 500 (`auth/tokens.py` resolves a dev-only insecure fallback when `AEROPREDICT_ENV=dev`)
+- `MLFLOW_TRACKING_URI` + `MLFLOW_MODEL_URI` — required by `scripts/check_alerts.py` and `POST /predict/*` (server.py) to resolve the registered model (`models:/delay-predictor/production`). The model is registered by `scripts/register_model.py` on an ephemeral CI runner, so without Doppler values the cron logs a warning and exits 0 WITHOUT generating alerts.
 
 **Doppler CLI is REQUIRED to run almost any pipeline script.** There is **no `.env` file** with these secrets — they live only in Doppler (verified: `MONGODB_URI` is not in `.env`). Before running any `scripts/*.py` that touches Bronze/Silver/Gold, authenticate Doppler locally (`doppler login`, already configured as AeroPredict project) and prefix with `doppler run -- …`. Without it, the script will fail to build the Mongo/Postgres/Delta connections. Local Docker services (`docker compose up -d`) provide the DBs, but the *URIs/creds/pointers* still come from Doppler.
