@@ -294,8 +294,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # El modelo MLflow puede no estar disponible (p.ej. runner efímero sin
+    # MLFLOW_TRACKING_URI/MLFLOW_MODEL_URI configurados). Salir con warning
+    # (exit 0) en vez de fallar el cron: no hay alertas que generar sin modelo.
     try:
-        stats = check_alerts(dry_run=args.dry_run, force=args.force)
+        model = _load_model()
+    except Exception as exc:
+        logger.warning(
+            "Modelo MLflow no disponible: %s. Configura MLFLOW_TRACKING_URI/"
+            "MLFLOW_MODEL_URI (Doppler) y reintenta; saliendo sin alertas.",
+            exc,
+        )
+        return 0
+
+    try:
+        stats = check_alerts(
+            dry_run=args.dry_run, force=args.force, model=model
+        )
     except Exception as exc:
         logger.error("check_alerts falló: %s", exc)
         return 1

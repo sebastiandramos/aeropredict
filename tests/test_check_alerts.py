@@ -363,15 +363,15 @@ def test_main_all_failed_exit_one(module, monkeypatch):
     assert module.main([]) == 1
 
 
-def test_main_model_load_failure_exit_one(module, monkeypatch):
-    """Fallo al cargar el modelo → exit 1 (hard failure)."""
+def test_main_model_load_failure_exit_zero(module, monkeypatch):
+    """Fallo al cargar el modelo → exit 0 (graceful: sin modelo no hay alertas)."""
 
     def failing_load():
         raise RuntimeError("model unavailable")
 
     monkeypatch.setattr(module, "_load_model", failing_load)
 
-    assert module.main([]) == 1
+    assert module.main([]) == 0
 
 
 def test_main_unknown_flag_raises_system_exit(module):
