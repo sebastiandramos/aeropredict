@@ -28,6 +28,7 @@ from uuid import uuid4
 
 import psycopg2
 import pymongo
+from psycopg2.extras import Json
 from pymongo.collection import Collection
 
 from ..opensky.config import get_mongo_uri, get_postgres_uri
@@ -315,7 +316,7 @@ def insert_alert(
             INSERT INTO gold.alerts
                 (user_id, flight_key, severity, delay_minutes_predicted,
                  factor_jsonb, email_sent)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -323,7 +324,7 @@ def insert_alert(
                 flight_key,
                 severity,
                 delay_minutes_predicted,
-                factor_jsonb,
+                Json(factor_jsonb),
                 email_sent,
             ),
         )
