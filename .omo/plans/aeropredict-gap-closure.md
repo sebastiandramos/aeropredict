@@ -8,8 +8,8 @@
 
 **What it will NOT do:** This plan does NOT deploy to production, does NOT set up Airflow/Kubernetes (GitHub Actions cron is sufficient for now), does NOT build dashboards (that's Phase 2), does NOT optimize query performance beyond current indexes, and does NOT audit the OpenSky API account usage. Those are future work.
 
-**Effort:** **XL** (4 phases, ~250-300 tasks equivalent across a 4-week timeline for 2-3 engineers)  
-**Risk:** **Medium** — ML model training is data-dependent; if schedules data remains sparse (144 docs), delay prediction accuracy will be limited. Mitigation: start with synthetic delay injection for testing, then pivot to real schedules once AviationStack integration is proven.  
+**Effort:** **XL** (4 phases, ~250-300 tasks equivalent across a 4-week timeline for 2-3 engineers)
+**Risk:** **Medium** — ML model training is data-dependent; if schedules data remains sparse (144 docs), delay prediction accuracy will be limited. Mitigation: start with synthetic delay injection for testing, then pivot to real schedules once AviationStack integration is proven.
 **Decisions I made for you:**
 1. **Test framework: pytest** with `pytest-cov` — industry standard, integrates with CI
 2. **ML stack: LightGBM** — lighter than XGBoost, faster training, good for TFM scope
@@ -82,7 +82,7 @@ Your next move: **Approve this plan** (or request a high-accuracy review). Once 
 **Wave 2 (Week 1-2, 5 todos):** Data Quality & Feature Store
 - Pydantic schemas, validation wrappers, feature store completeness tests
 
-**Wave 3 (Week 2-3, 8 todos):** ML Model Training & Tracking  
+**Wave 3 (Week 2-3, 8 todos):** ML Model Training & Tracking
 - Dataset preparation, feature engineering, hyperparameter search, model registry
 
 **Wave 4 (Week 3-4, 7 todos):** API, Prediction Archival & Visualization
@@ -133,11 +133,11 @@ Your next move: **Approve this plan** (or request a high-accuracy review). Once 
   - **Must NOT do:** Do NOT modify existing pipeline scripts; only wrap them in test harnesses.
   - **Parallelization:** Wave 1 | Blocked by: — | Blocks: 1.2-1.6
   - **References:** `pyproject.toml:63` (pytest config), `src/aeropredict/opensky/models.py` (dataclasses to test), `.github/workflows/pipeline.yml` (CI trigger template)
-  - **Acceptance criteria (agent-executable):** 
+  - **Acceptance criteria (agent-executable):**
     - `pytest --collect-only tests/` returns 5+ test modules
     - `pytest --cov=src/aeropredict --cov-report=term-missing` shows 0% coverage (baseline before writing tests)
     - `conftest.py` provides `mongo_client`, `postgres_client`, `mock_opensky_data` fixtures
-  - **QA scenarios:** 
+  - **QA scenarios:**
     - Happy: Run `pytest tests/conftest.py::test_fixtures_available` → fixture injection works
     - Failure: Run `pytest tests/conftest.py::test_mongo_connection` → fails gracefully if MongoDB not running; test checks for error message
   - **Evidence:** `.omo/evidence/task-1-pytest-setup.log` (pytest output), `.omo/evidence/task-1-conftest.py` (fixture defs)
@@ -648,15 +648,15 @@ Your next move: **Approve this plan** (or request a high-accuracy review). Once 
     - Set up Grafana instance (Docker container, runs on localhost:3000)
     - Connect PostgreSQL as data source: `postgresql://aeropredict:aeropredict@localhost:5432/aeropredict`
     - Create 4 dashboards (JSON config version-controlled in `.omo/dashboards/`):
-      1. **Model Performance**: 
+      1. **Model Performance**:
          - Latest MAE/RMSE/R² metrics from `data/reports/evaluation_latest.json` (stat panels)
          - Confusion matrix heatmap: predicted vs actual delay categories (query `gold.predictions` join with actuals)
-      2. **Feature Importance**: 
+      2. **Feature Importance**:
          - Bar chart of top 10 LightGBM features (import from MLflow model card as CSV, static panel)
-      3. **Prediction History**: 
+      3. **Prediction History**:
          - Table panel: last 50 predictions from `gold.predictions` (request_id, delay_pred, eta_pred, timestamp)
          - Date range filter (user-selectable)
-      4. **Data Quality**: 
+      4. **Data Quality**:
          - Gauge panels: null % per critical feature in `gold.feature_store`
          - Row counts per stage: bronze, silver, gold (using COUNT queries)
     - Enable auto-refresh: 5min intervals for live data updates
