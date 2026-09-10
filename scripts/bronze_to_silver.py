@@ -38,6 +38,7 @@ import csv
 import io
 import json
 import logging
+import math
 import sys
 import time
 from collections.abc import Callable
@@ -156,6 +157,27 @@ def _split_pipe(value: Any) -> list[str]:
 # Doc builders de las fuentes complementarias (puros, sin DB)
 # ===================================================================
 
+# Magnus-Tetens formula constants
+_MAGNUS_A = 17.625
+_MAGNUS_B = 243.04
+
+
+def compute_relative_humidity(temp: float | None, dewp: float | None) -> float | None:
+    """Humedad relativa (%) a partir de temperatura y punto de rocío (°C).
+
+    Usa la fórmula de Magnus-Tetens:
+        RH = 100 * exp(a*dewp / (B+dewp)) / exp(a*temp / (B+temp))
+
+    Devuelve ``None`` si *temp* o *dewp* no son numéricos.  El resultado se
+    redondea a 1 decimal y se recorta al rango [0.0, 100.0].
+    """
+    if temp is None or dewp is None:
+        return None
+    numerator = math.exp((_MAGNUS_A * dewp) / (_MAGNUS_B + dewp))
+    denominator = math.exp((_MAGNUS_A * temp) / (_MAGNUS_B + temp))
+    relh = 100.0 * numerator / denominator
+    return round(max(0.0, min(100.0, relh)), 1)
+
 
 def _build_metar_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Construye documentos METAR para MongoDB a partir de filas Bronze.
@@ -173,16 +195,19 @@ def _build_metar_docs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         try:
             reader = csv.DictReader(io.StringIO(response))
             for csv_row in reader:
-                icao_id = (csv_row.get("icaoId") or "").strip()
+                icao_id = (csv_row.get("icao_id") or csv_row.get("icaoId") or "").strip()
                 if not icao_id:
                     continue
+                temp = _coerce_float(csv_row.get("temp"))
+                dewp = _coerce_float(csv_row.get("dewp"))
                 docs.append({
                     "icao_id": icao_id,
                     "raw_ob": csv_row.get("rawOb", ""),
                     "receipt_time": csv_row.get("receiptTime", ""),
                     "obs_time": _coerce_int(csv_row.get("obsTime")),
-                    "temp": _coerce_float(csv_row.get("temp")),
-                    "dewp": _coerce_float(csv_row.get("dewp")),
+                    "temp": temp,
+                    "dewp": dewp,
+                    "relh": compute_relative_humidity(temp, dewp),
                     "wdir": _coerce_int(csv_row.get("wdir")),
                     "wspd": _coerce_int(csv_row.get("wspd")),
                     "wgst": _coerce_int(csv_row.get("wgst")),

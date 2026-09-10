@@ -58,6 +58,7 @@ def test_build_metar_docs_maps_camelcase_and_skips_empty_icao():
         "obs_time": 1754046000,
         "temp": 18.0,
         "dewp": 12.0,
+        "relh": 68.0,
         "wdir": 280,
         "wspd": 5,
         "wgst": 8,
@@ -73,6 +74,7 @@ def test_build_metar_docs_maps_camelcase_and_skips_empty_icao():
         "obs_time": 1754046300,
         "temp": None,          # "M" → None
         "dewp": None,          # vacío → None
+        "relh": None,          # temp or dewp missing → None
         "wdir": None,          # "N/A" → None
         "wspd": 3,
         "wgst": None,          # vacío → None
@@ -88,6 +90,45 @@ def test_build_metar_docs_empty_response_yields_no_docs():
 
     assert module._build_metar_docs([]) == []
     assert module._build_metar_docs([{"response": None}]) == []
+
+
+# ---------------------------------------------------------------------------
+# Humedad relativa (Magnus-Tetens) — compute_relative_humidity
+# ---------------------------------------------------------------------------
+
+
+def test_compute_relative_humidity_normal_values():
+    module = _load_bronze_to_silver_module()
+    relh = module.compute_relative_humidity(20.0, 15.0)
+    assert relh is not None
+    assert isinstance(relh, float)
+    assert abs(relh - 72.9) < 0.1  # 72.938... → 72.9
+
+
+def test_compute_relative_humidity_temp_equals_dewp():
+    module = _load_bronze_to_silver_module()
+    assert module.compute_relative_humidity(10.0, 10.0) == 100.0
+
+
+def test_compute_relative_humidity_none_temp_returns_none():
+    module = _load_bronze_to_silver_module()
+    assert module.compute_relative_humidity(None, 15.0) is None
+
+
+def test_compute_relative_humidity_none_dewp_returns_none():
+    module = _load_bronze_to_silver_module()
+    assert module.compute_relative_humidity(20.0, None) is None
+
+
+def test_compute_relative_humidity_both_none_returns_none():
+    module = _load_bronze_to_silver_module()
+    assert module.compute_relative_humidity(None, None) is None
+
+
+def test_compute_relative_humidity_clamped_to_100():
+    """dewp > temp should clamp to 100.0."""
+    module = _load_bronze_to_silver_module()
+    assert module.compute_relative_humidity(10.0, 15.0) == 100.0
 
 
 # ---------------------------------------------------------------------------

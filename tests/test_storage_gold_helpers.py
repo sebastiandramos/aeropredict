@@ -70,6 +70,7 @@ def _metar_doc(icao_id, obs_time, **overrides):
         "obs_time": obs_time,
         "temp": 25.0,
         "dewp": 8.0,
+        "relh": 33.9,
         "wdir": 240,
         "wspd": 12,
         "wgst": 20,
@@ -163,7 +164,7 @@ def test_write_metar_gold_inserts_rows(monkeypatch):
     assert "ON CONFLICT (icao_id, obs_time) DO NOTHING" in sql
     assert page_size == 500
     assert template == (
-        "(%s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        "(%s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
     row = rows[0]
     assert row[0] == "LEMD"
@@ -171,15 +172,19 @@ def test_write_metar_gold_inserts_rows(monkeypatch):
     assert isinstance(row[2], datetime)  # receipt_time parseada
     assert row[3] == 1722657600
     assert row[4] == 25.0
-    assert row[9] == "9999"
-    assert row[11] == "VFR"
-    assert row[12] == 4000
+    assert row[6] == 33.9  # relh
+    assert row[10] == "9999"
+    assert row[12] == "VFR"
+    assert row[13] == 4000
 
 
 def test_write_metar_gold_defensive_on_bad_values(monkeypatch):
     conn = _patch_conn(monkeypatch)
     docs = [
-        _metar_doc("LEMD", 1, receipt_time="no-iso", temp="XX", wdir="abc", visib=9999),
+        _metar_doc(
+            "LEMD", 1,
+            receipt_time="no-iso", temp="XX", relh="bad", wdir="abc", visib=9999,
+        ),
     ]
 
     n = storage_gold.write_metar_gold(docs)
@@ -188,8 +193,9 @@ def test_write_metar_gold_defensive_on_bad_values(monkeypatch):
     _, rows, _, _ = conn.calls[0]
     assert rows[0][2] is None  # receipt_time no parseable
     assert rows[0][4] is None  # temp no numérico
-    assert rows[0][6] is None  # wdir no numérico
-    assert rows[0][9] == "9999"  # visib numérico str → truncado
+    assert rows[0][6] is None  # relh no numérico
+    assert rows[0][7] is None  # wdir no numérico
+    assert rows[0][10] == "9999"  # visib numérico str → truncado
 
 
 def test_write_metar_gold_skips_missing_icao_or_obs_time(monkeypatch):

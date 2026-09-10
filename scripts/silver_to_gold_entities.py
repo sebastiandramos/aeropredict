@@ -135,6 +135,7 @@ METAR_FIELDS = {
     "obs_time": 1,
     "temp": 1,
     "dewp": 1,
+    "relh": 1,
     "wdir": 1,
     "wspd": 1,
     "wgst": 1,

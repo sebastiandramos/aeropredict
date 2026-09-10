@@ -169,35 +169,21 @@ CREATE TABLE IF NOT EXISTS gold.weather (
 CREATE INDEX IF NOT EXISTS idx_weather_airport_date ON gold.weather (airport_code, flight_date);
 
 CREATE TABLE IF NOT EXISTS gold.feature_store (
-    icao24                      VARCHAR(6) NOT NULL,
-    flight_date                 DATE NOT NULL,
-    callsign                    VARCHAR(10),
-    departure_airport           VARCHAR(4),
-    arrival_airport             VARCHAR(4),
-    delay_minutes               FLOAT,
-    airborne_minutes            FLOAT,
-    departure_hour              INTEGER,
-    day_of_week                 INTEGER,
-    month                       INTEGER,
-    aircraft_type               VARCHAR(30),
-    aircraft_manufacturer       VARCHAR(150),
-    aircraft_operator           VARCHAR(100),
-    aircraft_age_years          FLOAT,
-    route_daily_traffic         INTEGER,
-    route_total_density         INTEGER,
-    departure_airport_hourly_traffic INTEGER,
-    arrival_airport_hourly_traffic   INTEGER,
-    dep_temperature             FLOAT,
-    dep_precipitation           FLOAT,
-    dep_wind_speed              FLOAT,
-    dep_visibility              FLOAT,
-    arr_temperature             FLOAT,
-    arr_precipitation           FLOAT,
-    arr_wind_speed              FLOAT,
-    arr_visibility              FLOAT,
-    schedule_source             VARCHAR(20),
-    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (icao24, flight_date)
+    aena_airport_iata   VARCHAR(4) NOT NULL,
+    flight_number       VARCHAR(20) NOT NULL,
+    flight_type         VARCHAR(20) NOT NULL,
+    scheduled_local     VARCHAR(30) NOT NULL,
+    hora_vuelo          INTEGER NOT NULL,
+    dia_semana          INTEGER NOT NULL,
+    airline_iata        VARCHAR(4),
+    other_airport_iata  VARCHAR(4),
+    temperatura_metar   FLOAT,
+    punto_rocio_metar   FLOAT,
+    relh                FLOAT,
+    retraso_minutos     FLOAT,
+    retraso_10_min      VARCHAR(20),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (aena_airport_iata, flight_number, flight_type, scheduled_local)
 );
 
 CREATE TABLE IF NOT EXISTS gold.aena_infovuelos (
@@ -243,6 +229,7 @@ CREATE TABLE IF NOT EXISTS gold.metar (
     obs_time       BIGINT NOT NULL,
     temp           FLOAT,
     dewp           FLOAT,
+    relh           FLOAT,
     wdir           INTEGER,
     wspd           INTEGER,
     wgst           INTEGER,
@@ -890,6 +877,7 @@ def write_metar_gold(metar_reports: list[dict[str, Any]]) -> int:
             obs_time,
             _safe_float(doc.get("temp")),
             _safe_float(doc.get("dewp")),
+            _safe_float(doc.get("relh")),
             _safe_int(doc.get("wdir")),
             _safe_int(doc.get("wspd")),
             _safe_int(doc.get("wgst")),
@@ -911,14 +899,14 @@ def write_metar_gold(metar_reports: list[dict[str, Any]]) -> int:
             cur,
             """INSERT INTO gold.metar
             (icao_id, raw_ob, receipt_time, obs_time,
-             temp, dewp, wdir, wspd, wgst, visib, altim, flt_cat, clouds_base)
+             temp, dewp, relh, wdir, wspd, wgst, visib, altim, flt_cat, clouds_base)
             VALUES %s
             ON CONFLICT (icao_id, obs_time) DO NOTHING
             """,
             rows,
             template=(
                 "(%s, %s, %s::timestamptz, %s,"
-                " %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             ),
             page_size=500,
         )
