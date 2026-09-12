@@ -1,0 +1,509 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "AeroPredict ML Model Monitoring Dashboard",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Model Performance",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 15 },
+              { "color": "red", "value": 25 }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "MAE (Mean Absolute Error)",
+      "description": "Mean Absolute Error of delay predictions from latest evaluation",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(ABS(p.predicted_delay_minutes - EXTRACT(EPOCH FROM (f.actual_arrival - p.predicted_eta + (p.predicted_delay_minutes || ' minutes')::interval)) / 60.0))::numeric, 2) AS mae FROM gold.predictions p JOIN gold.flights f ON p.flight_features->>'icao24' = f.icao24 WHERE p.timestamp >= NOW() - INTERVAL '30 days' AND f.actual_arrival IS NOT NULL",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "RMSE (Root Mean Square Error)",
+      "description": "Root Mean Square Error of delay predictions from latest evaluation",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(SQRT(AVG(POWER(p.predicted_delay_minutes - EXTRACT(EPOCH FROM (f.actual_arrival - p.predicted_eta + (p.predicted_delay_minutes || ' minutes')::interval)) / 60.0, 2)))::numeric, 2) AS rmse FROM gold.predictions p JOIN gold.flights f ON p.flight_features->>'icao24' = f.icao24 WHERE p.timestamp >= NOW() - INTERVAL '30 days' AND f.actual_arrival IS NOT NULL",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.5 }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "R-Squared",
+      "description": "Coefficient of determination from latest evaluation",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS prediction_count FROM gold.predictions WHERE timestamp >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Total Predictions (30d)",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS prediction_count FROM gold.predictions WHERE timestamp >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "id": 5,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "timestamp", "desc": true }]
+      },
+      "title": "Recent Predictions",
+      "type": "table",
+      "targets": [
+        {
+          "rawSql": "SELECT request_id::text, model_version, ROUND(predicted_delay_minutes::numeric, 2) AS delay_min, predicted_eta, timestamp FROM gold.predictions ORDER BY timestamp DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "request_id": "Request ID",
+              "model_version": "Model",
+              "delay_min": "Delay (min)",
+              "predicted_eta": "Predicted ETA",
+              "timestamp": "Timestamp"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 101,
+      "title": "Feature Importance",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "Importance",
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "scaleDistribution": { "type": "linear" },
+            "thresholdsStyle": { "mode": "off" }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 6,
+      "options": {
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 200
+      },
+      "title": "Top Feature Importances (LightGBM)",
+      "description": "Relative importance of features in the delay prediction model (static values from model training)",
+      "type": "barchart",
+      "targets": [
+        {
+          "rawSql": "SELECT * FROM (VALUES ('route_distance', 100), ('hour_of_day', 85), ('day_of_week', 72), ('traffic_hourly_count', 68), ('previous_delay_avg', 65), ('route_popularity', 55), ('airline', 48), ('weather_wind_speed', 42), ('weather_temperature_2m', 38), ('weather_precipitation', 35), ('aircraft_type', 28), ('distance_bucket', 22)) AS t(feature, importance) ORDER BY importance DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "feature": "Feature",
+              "importance": "Importance"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "title": "Prediction History",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "delay_min" },
+            "properties": [
+              { "id": "unit", "value": "m" },
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error_min" },
+            "properties": [
+              { "id": "unit", "value": "m" },
+              { "id": "decimals", "value": 1 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 10 },
+                    { "color": "red", "value": 25 }
+                  ]
+                }
+              },
+              { "id": "custom.cellOptions", "value": { "mode": "basic", "type": "color-background" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "id": 7,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "timestamp", "desc": true }],
+        "footer": { "show": true, "reducer": ["count"], "countRows": false }
+      },
+      "title": "Prediction History (Last 50)",
+      "description": "All archived predictions with model version, predicted delay, and actual arrival when available",
+      "type": "table",
+      "targets": [
+        {
+          "rawSql": "SELECT p.request_id::text AS request_id, p.model_version, ROUND(p.predicted_delay_minutes::numeric, 1) AS delay_min, p.predicted_eta, p.timestamp, f.actual_arrival, CASE WHEN f.actual_arrival IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (f.actual_arrival - p.predicted_eta + (p.predicted_delay_minutes || ' minutes')::interval)) / 60.0::numeric, 1) ELSE NULL END AS error_min FROM gold.predictions p LEFT JOIN gold.flights f ON p.flight_features->>'icao24' = f.icao24 ORDER BY p.timestamp DESC LIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "request_id": "Request ID",
+              "model_version": "Model",
+              "delay_min": "Delay (min)",
+              "predicted_eta": "Predicted ETA",
+              "timestamp": "Timestamp",
+              "actual_arrival": "Actual Arrival",
+              "error_min": "Error (min)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "id": 103,
+      "title": "Data Quality",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "green", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 26 },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Flights (Gold)",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS row_count FROM gold.flights",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 200 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 26 },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Feature Store Rows",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS row_count FROM gold.feature_store",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 26 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Predictions Archived",
+      "type": "stat",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS row_count FROM gold.predictions",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "aeropredict-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 26 },
+      "id": 11,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "title": "Feature Store Null %",
+      "description": "Percentage of NULL values in critical feature columns",
+      "type": "gauge",
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND((100.0 * COUNT(*) FILTER (WHERE route_distance IS NULL OR hour_of_day IS NULL) / NULLIF(COUNT(*), 0))::numeric, 2) AS null_pct FROM gold.feature_store",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["aeropredict", "ml", "aviation"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AeroPredict - ML Model Monitoring",
+  "uid": "aeropredict-ml",
+  "version": 1,
+  "weekStart": ""
+}

@@ -31,8 +31,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies (dev)
-        run: pip install -e ".[dev]"
+      - name: Install dependencies (dev, ml, api)
+        # `api` (fastapi + PyJWT + bcrypt) y `ml` (lightgbm, optuna...) son
+        # necesarios para que la suite de tests complete la colección.
+        run: pip install -e ".[dev,ml,api]"
 
       - name: Run pytest suite
         run: pytest tests/
