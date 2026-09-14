@@ -643,7 +643,8 @@ class TestCheckpoint:
         Returns the mock for write_flights_silver.
         """
         if table is None:
-            flights = [_make_flight(icao24=f"flt{i:03d}") for i in range(5)]
+            hex_ids = ["a1b2c3", "b2c3d4", "c3d4e5", "d4e5f6", "e5f6a7"]
+            flights = [_make_flight(icao24=hex_ids[i]) for i in range(5)]
             table = _build_mock_delta_table(flights)
 
         _monkeypatch_deltatable(monkeypatch, table)
@@ -666,7 +667,7 @@ class TestCheckpoint:
 
     def test_main_skips_processed_date(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When a date is in the checkpoint set, main returns 0 without writing."""
-        flights = [_make_flight(icao24="flt001")]
+        flights = [_make_flight(icao24="a1b2c3")]
         table = _build_mock_delta_table(flights, ["2026-06-15"])
 
         mock_write = self._mock_main_dependencies(
@@ -685,7 +686,7 @@ class TestCheckpoint:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """After a successful write, the date is added to the checkpoint set."""
-        flights = [_make_flight(icao24="flt001")]
+        flights = [_make_flight(icao24="a1b2c3")]
         table = _build_mock_delta_table(flights, ["2026-06-15"])
 
         mock_add = MagicMock()
@@ -785,8 +786,113 @@ class TestCheckpoint:
 
 
 # ===================================================================
-# TestArgumentParsing
+# TestSchemaValidationWiring
 # ===================================================================
+
+
+class TestSchemaValidationWiring:
+    """Validators from aeropredict.validators filter rows inside main()."""
+
+    def test_main_filters_flights_failing_schema(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Flights whose document violates FlightDocument are dropped before write."""
+        valid = _make_flight(icao24="a1b2c3", callsign="IBE1234")
+        invalid = _make_flight(icao24="ZZZZZZ", callsign="ABC123")  # Z no es hex
+        table = _build_mock_delta_table([valid, invalid])
+        mock_write = TestCheckpoint()._mock_main_dependencies(
+            monkeypatch,
+            table=table,
+            checkpoint_set=set(),
+            write_count=2,
+        )
+
+        rc = main(["--date", "2026-06-15", "--delta-root", "/tmp/fake"])
+
+        assert rc == 0
+        mock_write.assert_called_once()
+        args, _ = mock_write.call_args
+        flights_arg = args[0]
+        assert len(flights_arg) == 1
+        assert flights_arg[0].icao24 == "a1b2c3"
+
+    def test_main_weather_rejects_invalid_and_normalizes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Weather docs validated: invalid dropped, valid normalized (uppercase, UTC)."""
+        flights = [_make_flight(icao24="a1b2c3")]
+        table = _build_mock_delta_table(flights)
+        _monkeypatch_deltatable(monkeypatch, table)
+
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "get_checkpoint_set",
+            lambda _col: set(),
+        )
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "add_to_checkpoint_set",
+            MagicMock(),
+        )
+        monkeypatch.setattr(bronze_to_silver, "close_silver", MagicMock())
+        mock_write = MagicMock(return_value=1)
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "write_flights_silver",
+            mock_write,
+        )
+        mock_weather_write = MagicMock(return_value=1)
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "write_weather",
+            mock_weather_write,
+        )
+
+        # airport_code lowercase (normalizable) + humidity 150 (fuera 0-100 → rechazado)
+        weather_docs = [
+            {
+                "airport_code": "leal",
+                "timestamp": "2026-06-15T00:00:00",
+                "flight_date": "2026-06-15",
+                "temperature_2m": 20.5,
+                "precipitation": 0.0,
+                "wind_speed_10m": 10.0,
+                "wind_gusts_10m": 12.0,
+                "visibility": 8000.0,
+                "cloud_cover": 40.0,
+                "relative_humidity_2m": 55.0,
+            },
+            {
+                "airport_code": "LEAL",
+                "timestamp": "2026-06-15T01:00:00",
+                "flight_date": "2026-06-15",
+                "temperature_2m": 20.5,
+                "precipitation": 0.0,
+                "wind_speed_10m": 10.0,
+                "wind_gusts_10m": 12.0,
+                "visibility": 8000.0,
+                "cloud_cover": 40.0,
+                "relative_humidity_2m": 150.0,  # fuera de 0-100 → rechazado
+            },
+        ]
+        monkeypatch.setattr(
+            bronze_to_silver,
+            "_read_bronze_weather",
+            lambda *a, **k: weather_docs,
+        )
+
+        rc = main(["--date", "2026-06-15", "--delta-root", "/tmp/fake"])
+
+        assert rc == 0
+        mock_weather_write.assert_called_once()
+        args, _ = mock_weather_write.call_args
+        written = args[0]
+        assert len(written) == 1
+        assert written[0]["airport_code"] == "LEAL"  # normalizado uppercase
+        assert written[0]["timestamp"] == datetime(2026, 6, 15, 0, 0, tzinfo=UTC)
+        assert written[0]["flight_date"] == datetime(2026, 6, 15, tzinfo=UTC)
 
 
 class TestArgumentParsing:
