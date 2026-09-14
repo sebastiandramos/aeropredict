@@ -53,10 +53,10 @@ def _query_feature_store(conn: psycopg2.extensions.connection, date_start: str |
     if date_start or date_end:
         where_clauses: list[str] = []
         if date_start:
-            where_clauses.append("flight_date >= %s")
+            where_clauses.append("scheduled_local >= %s")
             params.append(date_start)
         if date_end:
-            where_clauses.append("flight_date <= %s")
+            where_clauses.append("scheduled_local <= %s")
             params.append(date_end)
         sql += " WHERE " + " AND ".join(where_clauses)
     cur.execute(sql, params)
@@ -73,45 +73,26 @@ def _mock_row(airport_choices: list[str]) -> dict[str, Any]:
     dep = random.choice(airport_choices)
     arr = random.choice([a for a in airport_choices if a != dep])
     hour = random.randint(0, 23)
-    scheduled_dep = now.replace(hour=hour, minute=0, second=0, microsecond=0) - timedelta(days=random.randint(0, 30))
-    airborne = max(5.0, random.gauss(60, 30))
-    delay = random.gauss(5, 15)
-    scheduled_arr = scheduled_dep + timedelta(minutes=airborne)
-    actual_arr = scheduled_arr + timedelta(minutes=delay)
+    scheduled_local = (
+        now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        - timedelta(days=random.randint(0, 30))
+    ).replace(tzinfo=None)
+    retraso = random.gauss(5, 15)
 
     return {
-        "icao24": f"{random.randint(0, 0xFFFFFF):06X}",
-        "flight_date": scheduled_dep.date().isoformat(),
-        "callsign": f"CS{random.randint(100,999)}",
-        "departure_airport": dep,
-        "arrival_airport": arr,
-        "delay_minutes": float(round(max(0, random.gauss(0, 3)), 1)),
-        "airborne_minutes": float(round(airborne, 1)),
-        "departure_hour": hour,
-        "day_of_week": scheduled_dep.isoweekday(),
-        "month": scheduled_dep.month,
-        "aircraft_type": random.choice(["A320", "A321", "B738", "E190"]),
-        "aircraft_manufacturer": random.choice(["Airbus", "Boeing", "Embraer"]),
-        "aircraft_operator": random.choice(["Iberia", "Vueling", "RYR"]),
-        "aircraft_age_years": round(abs(random.gauss(10, 8)), 1),
-        "route_daily_traffic": random.randint(0, 50),
-        "route_total_density": random.randint(0, 1000),
-        "departure_airport_hourly_traffic": random.randint(0, 200),
-        "arrival_airport_hourly_traffic": random.randint(0, 200),
-        "dep_temperature": round(random.uniform(-5, 35), 1),
-        "dep_precipitation": round(max(0.0, random.gauss(0.5, 1.0)), 2),
-        "dep_wind_speed": round(abs(random.gauss(5, 3)), 1),
-        "dep_visibility": round(random.uniform(2000, 10000), 1),
-        "arr_temperature": round(random.uniform(-5, 35), 1),
-        "arr_precipitation": round(max(0.0, random.gauss(0.5, 1.0)), 2),
-        "arr_wind_speed": round(abs(random.gauss(5, 3)), 1),
-        "arr_visibility": round(random.uniform(2000, 10000), 1),
-        "schedule_source": random.choice(["aerodatabox", "aviationstack"]),
-        "scheduled_departure": scheduled_dep.isoformat(),
-        "scheduled_arrival": scheduled_arr.isoformat(),
-        "created_at": now.isoformat(),
-        "previous_flight_delay": round(random.gauss(3, 10), 1),
-        "target_delay": float(round(delay, 1)),
+        "aena_airport_iata": dep,
+        "flight_number": f"IB{random.randint(1000, 9999)}",
+        "flight_type": "departures",
+        "scheduled_local": scheduled_local.isoformat(),
+        "hora_vuelo": hour,
+        "dia_semana": scheduled_local.isoweekday(),
+        "airline_iata": random.choice(["IB", "VY", "RYR"]),
+        "other_airport_iata": arr,
+        "temperatura_metar": round(random.uniform(-5, 35), 1),
+        "punto_rocio_metar": round(random.uniform(-10, 20), 1),
+        "relh": round(random.uniform(20, 100), 1),
+        "retraso_minutos": float(round(retraso, 1)),
+        "retraso_10_min": "RETRASO" if retraso >= 10 else "NO_RETRASO",
     }
 
 
@@ -164,8 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", default="data/processed/feature_store.parquet", help="Parquet output path")
     parser.add_argument("--csv-output", default="data/processed/feature_store.csv", help="CSV output path")
     parser.add_argument("--metadata-output", default="data/processed/feature_store_metadata.json", help="Metadata JSON path")
-    parser.add_argument("--date-start", help="Filter flight_date >= YYYY-MM-DD")
-    parser.add_argument("--date-end", help="Filter flight_date <= YYYY-MM-DD")
+    parser.add_argument("--date-start", help="Filter scheduled_local >= YYYY-MM-DD")
+    parser.add_argument("--date-end", help="Filter scheduled_local <= YYYY-MM-DD")
     parser.add_argument("--mock", action="store_true", help="Generate synthetic mock data instead of querying DB")
     parser.add_argument("--mock-rows", type=int, default=500, help="Number of mock rows to generate")
     parser.add_argument("--db-url", help="Override POSTGRES_URI env var for DB connection")
