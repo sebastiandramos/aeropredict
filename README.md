@@ -230,15 +230,15 @@ Seguimiento por tarjeta del tablero Trello
 | Seleccionar fuentes finales | ✅ | `docs/analisis_prediccion_retrasos.md` |
 | Integrar nuevas fuentes viables | ✅ | OpenSky, AENA, METAR, festivos, EUROCONTROL, OurAirports, NOTAM, aviación (PR #7, PR #9) |
 
-### Data Pipeline — ✅ 3/5 · 🟡 2/5 (en curso)
+### Data Pipeline — ✅ 5/5
 
 | Tarjeta | Estado | Dónde |
 |---|---|---|
 | Bronze / Silver / Gold | ✅ | `bronze_to_silver.py`, `silver_to_gold.py`, `silver_to_gold_entities.py` |
 | MongoDB / PostgreSQL / R2 | ✅ | CI + `docker-compose.yml` (local) |
 | Feature Store | ✅ | `build_feature_store.py` → `gold.feature_store` |
-| Validación de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
-| Limpieza de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+| Validación de datos | ✅ | `aeropredict.schemas` + `aeropredict.validators` cableados en `bronze_to_silver.py` (flights + weather) y `build_feature_store.py` (invariantes) |
+| Limpieza de datos | ✅ | dedup en `bronze_to_silver.py`, `ON CONFLICT` en Gold, `DISTINCT ON` en feature store, normalización de schema en weather |
 
 ### Modelos — 🟡 en curso (compañero)
 
