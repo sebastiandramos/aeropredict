@@ -438,6 +438,72 @@ def _reconcile_feature_store_schema(conn: Any, dry_run: bool = False) -> bool | 
     return True
 
 
+METAR_COLUMNS_SQL = """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'gold' AND table_name = 'metar'
+"""
+
+
+# Columnas del esquema canónico de gold.metar: (nombre, tipo DDL).
+METAR_CANONICAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("icao_id", "VARCHAR(8) NOT NULL"),
+    ("raw_ob", "TEXT"),
+    ("receipt_time", "TIMESTAMPTZ"),
+    ("obs_time", "BIGINT NOT NULL"),
+    ("temp", "FLOAT"),
+    ("dewp", "FLOAT"),
+    ("relh", "FLOAT"),
+    ("wdir", "INTEGER"),
+    ("wspd", "INTEGER"),
+    ("wgst", "INTEGER"),
+    ("visib", "VARCHAR(16)"),
+    ("altim", "FLOAT"),
+    ("flt_cat", "VARCHAR(8)"),
+    ("clouds_base", "INTEGER"),
+    ("ingested_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+)
+
+
+def _reconcile_metar_schema(conn: Any, dry_run: bool = False) -> list[str] | None:
+    """Añade a gold.metar las columnas del esquema canónico que falten.
+
+    Mismo bug de producción que feature_store: Neon conservaba una gold.metar
+    creada antes de añadir ``relh`` y ``CREATE TABLE IF NOT EXISTS`` la saltaba
+    en silencio (rompía ``build_feature_store`` con "column relh does not
+    exist"). A diferencia del reconcile de feature_store, aquí NO se dropea la
+    tabla: solo se añaden las columnas ausentes vía ``ALTER TABLE ... ADD
+    COLUMN IF NOT EXISTS`` (preserva datos y es idempotente).
+
+    Args:
+        conn: Conexión PostgreSQL (autocommit activo).
+        dry_run: Si True, no ejecuta los ALTER; solo informa.
+
+    Returns:
+        Lista de columnas añadidas,
+        [] si no-op (todas las columnas canónicas presentes),
+        None si dry_run y habría cambios.
+    """
+    with conn.cursor() as cur:
+        cur.execute(METAR_COLUMNS_SQL)
+        existing = {row[0] for row in cur.fetchall()}
+    missing = [name for name, _ in METAR_CANONICAL_COLUMNS if name not in existing]
+    if not missing:
+        return []
+    if dry_run:
+        logger.warning(
+            "gold.metar is missing column(s) %s; a real run would ALTER the table",
+            ", ".join(missing),
+        )
+        return None
+    with conn.cursor() as cur:
+        for name, ddl in METAR_CANONICAL_COLUMNS:
+            if name in missing:
+                cur.execute(f"ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS {name} {ddl}")
+    logger.info("gold.metar reconciled: added column(s) %s", ", ".join(missing))
+    return missing
+
+
 # ===================================================================
 # Gold — actualizaciones desde lista de vuelos
 # ===================================================================
@@ -952,6 +1018,7 @@ def write_metar_gold(metar_reports: list[dict[str, Any]]) -> int:
         )
 
     conn = _get_conn()
+    _reconcile_metar_schema(conn)
     with conn.cursor() as cur:
         execute_values(
             cur,

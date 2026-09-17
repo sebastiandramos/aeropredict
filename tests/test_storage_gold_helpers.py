@@ -31,13 +31,23 @@ class FakeCursor:
     def __exit__(self, *exc):
         return False
 
+    def execute(self, sql):
+        self.conn.executed.append(sql)
+
+    def fetchall(self):
+        return [[col] for col in self.conn.metar_columns]
+
 
 class FakeConn:
     """Conexión fake: registra execute_values y commit no-op."""
 
     def __init__(self):
         self.calls: list[tuple] = []  # (sql, rows, template, page_size)
+        self.executed: list[str] = []  # SQL de cursor.execute (reconciles, etc.)
         self.commits = 0
+        self.metar_columns: list[str] = [
+            name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
+        ]
 
     def cursor(self):
         return FakeCursor(self)
@@ -213,6 +223,64 @@ def test_write_metar_gold_skips_missing_icao_or_obs_time(monkeypatch):
     _, rows, _, _ = conn.calls[0]
     assert len(rows) == 1
     assert rows[0][0] == "LEMD"
+
+
+def _metar_columns_without(*missing: str) -> list[str]:
+    """Columnas canónicas de gold.metar excluyendo las indicadas."""
+    return [
+        name
+        for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
+        if name not in missing
+    ]
+
+
+def test_reconcile_metar_schema_adds_missing_columns(monkeypatch):
+    conn = _patch_conn(monkeypatch)
+    conn.metar_columns = _metar_columns_without("relh")
+
+    added = storage_gold._reconcile_metar_schema(conn)
+
+    assert added == ["relh"]
+    assert conn.executed[0] == storage_gold.METAR_COLUMNS_SQL
+    assert (
+        conn.executed[1]
+        == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
+    )
+
+
+def test_reconcile_metar_schema_noop_when_complete(monkeypatch):
+    conn = _patch_conn(monkeypatch)
+
+    added = storage_gold._reconcile_metar_schema(conn)
+
+    assert added == []
+    assert conn.executed == [storage_gold.METAR_COLUMNS_SQL]
+
+
+def test_reconcile_metar_schema_dry_run_does_not_alter(monkeypatch):
+    conn = _patch_conn(monkeypatch)
+    conn.metar_columns = _metar_columns_without("relh")
+
+    added = storage_gold._reconcile_metar_schema(conn, dry_run=True)
+
+    assert added is None
+    assert conn.executed == [storage_gold.METAR_COLUMNS_SQL]
+
+
+def test_write_metar_gold_alters_schema_before_insert(monkeypatch):
+    conn = _patch_conn(monkeypatch)
+    conn.metar_columns = _metar_columns_without("relh")
+
+    n = storage_gold.write_metar_gold([_metar_doc("LEMD", 1722657600)])
+
+    assert n == 1
+    assert (
+        conn.executed[1]
+        == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
+    )
+    sql, _, _, _ = conn.calls[0]
+    assert "INSERT INTO gold.metar" in sql
+    assert "relh" in sql
 
 
 # ------------------------------------------------------------------
