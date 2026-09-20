@@ -232,14 +232,69 @@ class TestScheduledToCutEpoch:
 # Integration: build_feature_store with fake DB
 # ------------------------------------------------------------------
 
+# Columnas del schema NUEVO (13 columnas) de gold.feature_store.
+NEW_FEATURE_STORE_COLUMNS = [
+    "aena_airport_iata",
+    "flight_number",
+    "flight_type",
+    "scheduled_local",
+    "hora_vuelo",
+    "dia_semana",
+    "airline_iata",
+    "other_airport_iata",
+    "temperatura_metar",
+    "punto_rocio_metar",
+    "relh",
+    "retraso_minutos",
+    "retraso_10_min",
+    "created_at",
+]
+
+# Columnas del schema ANTIGUO (28 columnas) que existía en Neon.
+STALE_FEATURE_STORE_COLUMNS = [
+    "icao24",
+    "flight_date",
+    "callsign",
+    "departure_airport",
+    "arrival_airport",
+    "delay_minutes",
+    "airborne_minutes",
+    "departure_hour",
+    "day_of_week",
+    "month",
+    "aircraft_type",
+    "aircraft_manufacturer",
+    "aircraft_operator",
+    "aircraft_age_years",
+    "route_daily_traffic",
+    "route_total_density",
+    "departure_airport_hourly_traffic",
+    "arrival_airport_hourly_traffic",
+    "dep_temperature",
+    "dep_precipitation",
+    "dep_wind_speed",
+    "dep_visibility",
+    "arr_temperature",
+    "arr_precipitation",
+    "arr_wind_speed",
+    "arr_visibility",
+    "schedule_source",
+    "created_at",
+]
+
 
 class FakeCursor:
     """Minimal cursor stub for integration tests."""
 
-    def __init__(self, results: list[tuple] | None = None):
+    def __init__(
+        self,
+        results: list[tuple] | None = None,
+        executed_sql: list[str] | None = None,
+    ):
         self._results = results or []
         self.description: list[tuple] = []
         self.executed: list[tuple] = []
+        self._executed_sql = executed_sql
 
     def __enter__(self) -> FakeCursor:
         return self
@@ -249,6 +304,8 @@ class FakeCursor:
 
     def execute(self, sql: str, params: tuple = ()) -> None:
         self.executed.append((sql, params))
+        if self._executed_sql is not None:
+            self._executed_sql.append(sql)
         if self._results:
             self.description = [("col",)] * len(self._results[0])
 
@@ -263,25 +320,51 @@ class FakeCursor:
 
 
 class FakeConn:
-    """Fake PostgreSQL connection for integration tests."""
+    """Fake PostgreSQL connection for integration tests.
 
-    def __init__(self, departures: list[tuple] | None = None):
+    The first ``cursor()`` call answers the information_schema query from
+    ``_reconcile_feature_store_schema`` with a controllable column set
+    (defaults to the NEW 13-column schema so existing tests no-op the
+    reconcile). All executed SQL is aggregated in ``executed_sql``.
+    """
+
+    def __init__(
+        self,
+        departures: list[tuple] | None = None,
+        feature_store_columns: list[str] | None = None,
+    ):
         self.departures = departures or []
+        self.feature_store_columns = (
+            feature_store_columns
+            if feature_store_columns is not None
+            else list(NEW_FEATURE_STORE_COLUMNS)
+        )
+        self._schema_checked = False
         self.insert_calls: list[tuple] = []
+        self.executed_sql: list[str] = []
         self.commits = 0
         self.closed = False
 
     def cursor(self) -> FakeCursor:
+        # First cursor() is the information_schema query from the reconcile.
+        if not self._schema_checked:
+            self._schema_checked = True
+            cur = FakeCursor(
+                [(c,) for c in self.feature_store_columns],
+                executed_sql=self.executed_sql,
+            )
+            cur.description = [("column_name",)]
+            return cur
         # If first query is the deduped departures query, return those
         if self.departures and not self.insert_calls:
-            cur = FakeCursor(self.departures)
+            cur = FakeCursor(self.departures, executed_sql=self.executed_sql)
             cur.description = [
                 ("flight_number",), ("aena_airport_iata",), ("flight_type",),
                 ("scheduled_local",), ("estimated_local",), ("airline_iata",),
                 ("other_airport_iata",),
             ]
             return cur
-        return FakeCursor()
+        return FakeCursor(executed_sql=self.executed_sql)
 
     def commit(self) -> None:
         self.commits += 1
@@ -328,7 +411,7 @@ class TestBuildFeatureStoreIntegration:
         # Patch METAR fetch
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, icao, epoch: [
+            lambda c, icao, epoch, min_epoch=None: [
                 {"obs_time": int(epoch) - 3600, "temp": 25.0, "dewp": 10.0, "relh": 40.0},
             ],
         )
@@ -356,7 +439,7 @@ class TestBuildFeatureStoreIntegration:
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, icao, epoch: [
+            lambda c, icao, epoch, min_epoch=None: [
                 {"obs_time": int(epoch) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
             ],
         )
@@ -396,7 +479,7 @@ class TestBuildFeatureStoreIntegration:
         )
         monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
-        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e: [])
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
 
         captured_rows: list = []
         monkeypatch.setattr(
@@ -419,7 +502,7 @@ class TestBuildFeatureStoreIntegration:
         )
         monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
-        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e: [])
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
 
         captured_rows: list = []
         monkeypatch.setattr(
@@ -459,7 +542,9 @@ class TestBuildFeatureStoreIntegration:
         # METAR obs_time is AFTER the cut (future observation = leakage)
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, i, e: [{"obs_time": int(e) + 3600, "temp": 99.0, "dewp": 0.0, "relh": 0.0}],
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) + 3600, "temp": 99.0, "dewp": 0.0, "relh": 0.0},
+            ],
         )
 
         captured_rows: list = []
@@ -474,3 +559,232 @@ class TestBuildFeatureStoreIntegration:
         assert row[8] is None  # temperatura_metar — no leakage
         assert row[9] is None  # punto_rocio_metar
         assert row[10] is None  # relh
+
+    def test_invalid_retraso_category_skips_flight(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: compute_retraso_10_min returns a value outside the catalog.
+        When: build. Then: flight skipped (invariant violation)."""
+        monkeypatch.setattr(bfs, "_get_conn", lambda: FakeConn())
+        monkeypatch.setattr(
+            bfs, "_fetch_deduped_departures",
+            lambda c: [_make_departure_row()],
+        )
+        monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
+        monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
+        monkeypatch.setattr(
+            bfs, "_fetch_metar_for_airport",
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
+            ],
+        )
+        monkeypatch.setattr(
+            bfs, "compute_retraso_10_min",
+            lambda _retraso: "DESCONOCIDO",  # fuera de {None, RETRASO, NO_RETRASO}
+        )
+
+        captured_rows: list = []
+        monkeypatch.setattr(
+            bfs, "execute_values",
+            lambda cur, sql, al, **kw: captured_rows.extend(al),
+        )
+
+        n = bfs.build_feature_store()
+        assert n == 0
+        assert captured_rows == []
+
+    def test_metar_preload_covers_later_flights(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: two departures for the same airport, the first outside METAR
+        coverage (August) and the second inside it (2026-09-18). When: build.
+        Then: the METAR fetch happens ONCE over the GLOBAL window and the later
+        flight gets non-NULL weather (the old lazy cache froze the window to
+        the first flight's cut_epoch → NULL features)."""
+        early = _make_departure_row("IB0001", "MAD", "2026-08-03T12:00:00")
+        late = _make_departure_row("IB0002", "MAD", "2026-09-18T12:00:00")
+        monkeypatch.setattr(bfs, "_get_conn", lambda: FakeConn())
+        monkeypatch.setattr(bfs, "_fetch_deduped_departures", lambda c: [early, late])
+        monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
+        monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
+
+        cut_late = bfs.scheduled_to_cut_epoch("2026-09-18T12:00:00")
+        obs = [
+            {"obs_time": int(cut_late) - 3600, "temp": 21.0, "dewp": 9.0, "relh": 55.0},
+        ]
+        fetch_calls: list[tuple] = []
+
+        def fake_fetch(c, icao, max_epoch, min_epoch=None):
+            fetch_calls.append((icao, min_epoch, max_epoch))
+            lo = min_epoch if min_epoch is not None else int(max_epoch) - 7 * 86400
+            return [r for r in obs if lo <= r["obs_time"] <= max_epoch]
+
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", fake_fetch)
+        captured_rows: list = []
+        monkeypatch.setattr(
+            bfs, "execute_values",
+            lambda cur, sql, al, **kw: captured_rows.extend(al),
+        )
+
+        n = bfs.build_feature_store()
+        assert n == 2
+        # ONE fetch (the preload) over the global window, not per-flight
+        assert len(fetch_calls) == 1
+        icao, min_epoch, max_epoch = fetch_calls[0]
+        assert icao == "LEMD"
+        assert min_epoch == bfs.scheduled_to_cut_epoch("2026-08-03T12:00:00") - 7 * 86400
+        assert max_epoch == cut_late
+        # Early flight: no METAR in its window → None (correct)
+        assert captured_rows[0][8] is None
+        # Late flight: inside coverage → the obs is joined (the bug fix)
+        assert captured_rows[1][8] == 21.0
+        assert captured_rows[1][9] == 9.0
+        assert captured_rows[1][10] == 55.0
+
+
+# ------------------------------------------------------------------
+# _reconcile_feature_store_schema — direct unit tests
+# ------------------------------------------------------------------
+
+
+class TestReconcileFeatureStoreSchema:
+    """Direct unit tests for _reconcile_feature_store_schema branches."""
+
+    def test_new_schema_returns_false(self) -> None:
+        """Given: new 13-col schema. When: reconcile. Then: False (no-op)."""
+        conn = FakeConn(feature_store_columns=NEW_FEATURE_STORE_COLUMNS)
+        assert bfs._reconcile_feature_store_schema(conn) is False
+        assert not any("DROP TABLE" in s for s in conn.executed_sql)
+
+    def test_missing_table_returns_false(self) -> None:
+        """Given: no rows from information_schema. When: reconcile. Then: False."""
+        conn = FakeConn(feature_store_columns=[])
+        assert bfs._reconcile_feature_store_schema(conn) is False
+
+    def test_stale_schema_migrates_returns_true(self) -> None:
+        """Given: stale 28-col schema. When: reconcile. Then: True + DROP+CREATE."""
+        conn = FakeConn(feature_store_columns=STALE_FEATURE_STORE_COLUMNS)
+        assert bfs._reconcile_feature_store_schema(conn) is True
+        assert "DROP TABLE IF EXISTS gold.feature_store CASCADE" in conn.executed_sql
+        assert any(
+            "CREATE TABLE IF NOT EXISTS gold.feature_store" in s
+            for s in conn.executed_sql
+        )
+
+    def test_stale_schema_dry_run_returns_none(self) -> None:
+        """Given: stale schema + dry_run. When: reconcile. Then: None, no DROP."""
+        conn = FakeConn(feature_store_columns=STALE_FEATURE_STORE_COLUMNS)
+        assert bfs._reconcile_feature_store_schema(conn, dry_run=True) is None
+        assert not any("DROP TABLE" in s for s in conn.executed_sql)
+
+
+# ------------------------------------------------------------------
+# Schema auto-migration — integration tests
+# ------------------------------------------------------------------
+
+
+class TestFeatureStoreSchemaMigration:
+    """build_feature_store auto-migration of a stale gold.feature_store."""
+
+    def test_stale_schema_migrates_clears_checkpoint_and_repopulates(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: stale 28-col feature_store + checkpoint 'done'. When: build.
+        Then: DROP+CREATE executed, checkpoint cleared, rows inserted."""
+        conn = FakeConn(feature_store_columns=STALE_FEATURE_STORE_COLUMNS)
+        monkeypatch.setattr(bfs, "_get_conn", lambda: conn)
+
+        # Mutable checkpoint store: clear_checkpoints empties it so the
+        # short-circuit no longer fires and the INSERT loop repopulates.
+        checkpoint_store = {"done"}
+
+        def fake_get_checkpoint_set(_collection: str) -> set[str]:
+            return set(checkpoint_store)
+
+        def fake_clear_checkpoints(_collection: str) -> None:
+            checkpoint_store.clear()
+
+        monkeypatch.setattr(bfs, "get_checkpoint_set", fake_get_checkpoint_set)
+        monkeypatch.setattr(bfs, "clear_checkpoints", fake_clear_checkpoints)
+        monkeypatch.setattr(
+            bfs, "_fetch_deduped_departures", lambda c: [_make_departure_row()],
+        )
+        monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
+
+        captured_rows: list = []
+        monkeypatch.setattr(
+            bfs, "execute_values",
+            lambda cur, sql, al, **kw: captured_rows.extend(al),
+        )
+
+        n = bfs.build_feature_store()
+        assert n == 1
+        assert checkpoint_store == set()  # checkpoint cleared
+        assert "DROP TABLE IF EXISTS gold.feature_store CASCADE" in conn.executed_sql
+        assert len(captured_rows) == 1
+
+    def test_dry_run_stale_schema_short_circuits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: stale schema + dry_run=True. When: build. Then: returns 0,
+        no DROP executed, checkpoint NOT cleared."""
+        conn = FakeConn(feature_store_columns=STALE_FEATURE_STORE_COLUMNS)
+        monkeypatch.setattr(bfs, "_get_conn", lambda: conn)
+        cleared: list[str] = []
+        monkeypatch.setattr(bfs, "clear_checkpoints", lambda c: cleared.append(c))
+
+        n = bfs.build_feature_store(dry_run=True)
+        assert n == 0
+        assert not any("DROP TABLE" in s for s in conn.executed_sql)
+        assert cleared == []
+
+    def test_new_schema_with_checkpoint_short_circuits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: new schema + checkpoint 'done'. When: build. Then: reconcile
+        no-ops and the existing short-circuit returns 0."""
+        conn = FakeConn(feature_store_columns=NEW_FEATURE_STORE_COLUMNS)
+        monkeypatch.setattr(bfs, "_get_conn", lambda: conn)
+        monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: {"done"})
+
+        n = bfs.build_feature_store()
+        assert n == 0
+        assert not any("DROP TABLE" in s for s in conn.executed_sql)
+
+    def test_missing_flight_type_skips_flight(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: departure without flight_type (NOT NULL + PK in gold).
+        When: build. Then: flight skipped before insert."""
+        departure = _make_departure_row()
+        departure["flight_type"] = None
+        monkeypatch.setattr(bfs, "_get_conn", lambda: FakeConn())
+        monkeypatch.setattr(
+            bfs, "_fetch_deduped_departures",
+            lambda c: [departure],
+        )
+        monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
+        monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
+        monkeypatch.setattr(
+            bfs, "_fetch_metar_for_airport",
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
+            ],
+        )
+
+        captured_rows: list = []
+        monkeypatch.setattr(
+            bfs, "execute_values",
+            lambda cur, sql, al, **kw: captured_rows.extend(al),
+        )
+
+        n = bfs.build_feature_store()
+        assert n == 0
+        assert captured_rows == []

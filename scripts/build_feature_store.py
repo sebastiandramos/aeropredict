@@ -40,9 +40,14 @@ from psycopg2.extras import execute_values
 
 from aeropredict.opensky.checkpoint_mongo import (
     add_to_checkpoint_set,
+    clear_checkpoints,
     get_checkpoint_set,
 )
-from aeropredict.opensky.storage_gold import _get_conn
+from aeropredict.opensky.storage_gold import (
+    FEATURE_STORE_DDL,
+    _get_conn,
+    _reconcile_feature_store_schema,
+)
 from aeropredict.sources.airport_codes import get_icao_for_iata
 
 CHECKPOINT_COLLECTION = "build_feature_store"
@@ -51,32 +56,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-# ---------------------------------------------------------------------------
-# DDL — created by this script; other agents own storage_gold.py
-# ---------------------------------------------------------------------------
-
-FEATURE_STORE_DDL = """
-CREATE SCHEMA IF NOT EXISTS gold;
-
-CREATE TABLE IF NOT EXISTS gold.feature_store (
-    aena_airport_iata   VARCHAR(4) NOT NULL,
-    flight_number       VARCHAR(20) NOT NULL,
-    flight_type         VARCHAR(20) NOT NULL,
-    scheduled_local     VARCHAR(30) NOT NULL,
-    hora_vuelo          INTEGER NOT NULL,
-    dia_semana          INTEGER NOT NULL,
-    airline_iata        VARCHAR(4),
-    other_airport_iata  VARCHAR(4),
-    temperatura_metar   FLOAT,
-    punto_rocio_metar   FLOAT,
-    relh                FLOAT,
-    retraso_minutos     FLOAT,
-    retraso_10_min      VARCHAR(20),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (aena_airport_iata, flight_number, flight_type, scheduled_local)
-);
-"""
 
 INFERENCE_VIEW_SQL = """
 CREATE OR REPLACE VIEW gold.feature_store_inference AS
@@ -218,14 +197,17 @@ def _fetch_deduped_departures(pg_conn: Any) -> list[dict[str, Any]]:
 
 
 def _fetch_metar_for_airport(
-    pg_conn: Any, icao_id: str, max_epoch: float,
+    pg_conn: Any, icao_id: str, max_epoch: float, min_epoch: float | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch METAR rows for an airport with obs_time <= max_epoch.
 
     Returns rows sorted by obs_time ascending (for efficient cut-time scan).
-    Fetches a generous window (7 days before cut) to keep memory bounded.
+    Fetches a 7-day lookback window by default to keep memory bounded; pass
+    *min_epoch* to override the lower bound (the preload uses the global
+    scheduled window of the build).
     """
-    min_epoch = int(max_epoch) - 7 * 86400  # 7-day lookback
+    if min_epoch is None:
+        min_epoch = int(max_epoch) - 7 * 86400  # 7-day lookback
     sql = """
         SELECT obs_time, temp, dewp, relh
         FROM gold.metar
@@ -264,6 +246,21 @@ def build_feature_store(
     """
     pg_conn = _get_conn()
 
+    # -- Reconcile schema (auto-migrate a stale 28-column feature_store) --
+    reconciled = _reconcile_feature_store_schema(pg_conn, dry_run=dry_run)
+    if reconciled is None:
+        logger.warning(
+            "Dry-run: gold.feature_store has a stale schema; a real run would "
+            "DROP+recreate it and clear the checkpoint to repopulate."
+        )
+        return 0
+    if reconciled:
+        clear_checkpoints(CHECKPOINT_COLLECTION)
+        logger.info(
+            "gold.feature_store migrated to the new schema; checkpoint cleared "
+            "so the table is repopulated."
+        )
+
     # -- Checkpoint --
     checkpoint = get_checkpoint_set(CHECKPOINT_COLLECTION)
     if "done" in checkpoint and not force and not reset:
@@ -301,8 +298,26 @@ def build_feature_store(
         logger.warning("No departure flights found in gold.aena_infovuelos")
         return 0
 
-    # -- METAR cache: {icao_id: [rows]} — populated lazily per airport --
+    # -- METAR preload: {icao_id: [rows]} fetched ONCE per airport over the
+    # GLOBAL cut window. The old lazy cache keyed by ICAO froze the fetch
+    # window to the FIRST flight's cut_epoch, so later flights (whose
+    # departures fall inside METAR coverage) reused a stale/empty cache and
+    # got NULL weather features. Preloading over [min_sched - 7d, max_sched]
+    # fixes that with a single query per airport.
     metar_cache: dict[str, list[dict[str, Any]]] = {}
+    scheds = [f["scheduled_local"] for f in departures if f.get("scheduled_local")]
+    if scheds:
+        min_cut = scheduled_to_cut_epoch(min(scheds)) - 7 * 86400  # lookback floor
+        max_cut = scheduled_to_cut_epoch(max(scheds))
+        distinct_iatas = sorted({
+            f.get("aena_airport_iata") for f in departures if f.get("aena_airport_iata")
+        })
+        for iata in distinct_iatas:
+            preload_icao = _resolve_icao(iata, pg_conn)
+            if preload_icao:
+                metar_cache[preload_icao] = _fetch_metar_for_airport(
+                    pg_conn, preload_icao, max_cut, min_epoch=min_cut
+                )
 
     # -- Build rows --
     insert_sql = """
@@ -321,6 +336,7 @@ def build_feature_store(
     total_processed = 0
     skipped_no_sched = 0
     skipped_no_airport = 0
+    skipped_invalid = 0
 
     for flight in departures:
         total_processed += 1
@@ -332,7 +348,7 @@ def build_feature_store(
         flight_number = flight.get("flight_number")
         flight_type = flight.get("flight_type")
 
-        if not scheduled_local or not airport_iata or not flight_number:
+        if not scheduled_local or not airport_iata or not flight_number or not flight_type:
             skipped_no_sched += 1
             continue
 
@@ -357,13 +373,19 @@ def build_feature_store(
         retraso = compute_retraso(scheduled_local, estimated_local)
         retraso_cat = compute_retraso_10_min(retraso)
 
-        # -- METAR cut-time join --
+        # -- Invariantes de dominio (contrato del feature store) --
+        if not (
+            0 <= hora_vuelo <= 23
+            and 1 <= dia_semana <= 7
+            and retraso_cat in {None, "RETRASO", "NO_RETRASO"}
+        ):
+            skipped_invalid += 1
+            continue
+
+        # -- METAR cut-time join (preloaded cache, see preload above) --
         cut_epoch = scheduled_to_cut_epoch(scheduled_local)
 
-        if icao not in metar_cache:
-            metar_cache[icao] = _fetch_metar_for_airport(pg_conn, icao, cut_epoch)
-
-        metar_rows = metar_cache[icao]
+        metar_rows = metar_cache.get(icao, [])
         metar = select_cut_time_metar(metar_rows, cut_epoch)
 
         temp = metar.get("temp") if metar else None
@@ -387,9 +409,12 @@ def build_feature_store(
         ))
 
     logger.info(
-        "Processed %d flights (%d skipped: %d no schedule, %d no ICAO)",
-        total_processed, skipped_no_sched + skipped_no_airport,
-        skipped_no_sched, skipped_no_airport,
+        "Processed %d flights (%d skipped: %d no schedule, %d no ICAO, %d invalid values)",
+        total_processed,
+        skipped_no_sched + skipped_no_airport + skipped_invalid,
+        skipped_no_sched,
+        skipped_no_airport,
+        skipped_invalid,
     )
 
     if dry_run:

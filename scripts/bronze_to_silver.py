@@ -56,9 +56,7 @@ from aeropredict.opensky.logging_config import setup_daily_logger
 from aeropredict.opensky.models import Flight
 from aeropredict.opensky.storage import _build_table_uri
 from aeropredict.opensky.storage_silver import (
-    close as close_silver,
-)
-from aeropredict.opensky.storage_silver import (
+    _flight_to_doc,
     write_aena_infovuelos,
     write_eurocontrol_pru,
     write_flights_silver,
@@ -67,8 +65,12 @@ from aeropredict.opensky.storage_silver import (
     write_notam,
     write_weather,
 )
+from aeropredict.opensky.storage_silver import (
+    close as close_silver,
+)
 from aeropredict.sources.aena_infovuelos import AenaInfovuelosAdapter
 from aeropredict.sources.airport_codes import get_icao_for_iata
+from aeropredict.validators import validate_flights, validate_weather
 
 CHECKPOINT_COLLECTION = "bronze_to_silver"
 CHECKPOINT_COLLECTION_AENA = "bronze_to_silver_aena"
@@ -508,7 +510,15 @@ def _read_bronze_weather(
         logger.warning("No se pudo leer bronze/weather_openmeteo: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: the weather table is unpartitioned and grows daily,
+    # so a full read is expensive. Filter to the target day at scan time.
+    filters: list[tuple[str, str, Any]] | None = None
+    if target_date:
+        day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        filters = [("fetched_at", ">=", day_start), ("fetched_at", "<", day_end)]
+
+    table = dt.to_pyarrow_table(filters=filters)
     if target_date:
         import pyarrow as pa
         import pyarrow.compute as pc
@@ -566,7 +576,22 @@ def _get_aena_bronze_hours(
         logger.warning("No se pudo leer bronze/aena_infovuelos: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: bronze/aena_infovuelos is unpartitioned and grows
+    # hourly, so a full scan is expensive. Push the hour window into Delta at
+    # scan time and keep the in-memory floor() filter below as a safety net.
+    if override is not None:
+        day_start = datetime(override.year, override.month, override.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        filters: list[tuple[str, str, Any]] | None = [
+            ("fetched_at", ">=", day_start),
+            ("fetched_at", "<", day_end),
+        ]
+    else:
+        now = datetime.now(UTC)
+        window_start = now - timedelta(days=window_days)
+        filters = [("fetched_at", ">=", window_start), ("fetched_at", "<=", now)]
+
+    table = dt.to_pyarrow_table(filters=filters)
     if table.num_rows == 0:
         return []
 
@@ -608,7 +633,13 @@ def _read_bronze_aena_infovuelos(
         logger.warning("No se pudo leer bronze/aena_infovuelos: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: only read the requested hour instead of the full
+    # unpartitioned table. The in-memory floor() filter stays as a safety net.
+    filters: list[tuple[str, str, Any]] | None = [
+        ("fetched_at", ">=", hour),
+        ("fetched_at", "<", hour + timedelta(hours=1)),
+    ]
+    table = dt.to_pyarrow_table(filters=filters)
     import pyarrow as pa
     import pyarrow.compute as pc
 
@@ -962,6 +993,34 @@ def main(argv: list[str] | None = None) -> int:
 
             # Leer y parsear weather
             weather_docs = _read_bronze_weather(delta_root, target_date)
+
+            # Validación no bloqueante contra schemas (aeropredict.validators):
+            # rechaza documentos que violan el contrato Silver y, en weather,
+            # propaga la normalización de pydantic (uppercase, UTC).
+            if flights:
+                flight_docs = [_flight_to_doc(f) for f in flights]
+                _valid_flights, invalid_flights = validate_flights(flight_docs)
+                if invalid_flights:
+                    logger.warning(
+                        "Validación flights: %d documentos rechazados por schema (%.1f%%)",
+                        len(invalid_flights),
+                        100.0 * len(invalid_flights) / len(flight_docs),
+                    )
+                    rejected = {id(iv["row"]) for iv in invalid_flights}
+                    flights = [
+                        f
+                        for f, d in zip(flights, flight_docs, strict=True)
+                        if id(d) not in rejected
+                    ]
+            if weather_docs:
+                valid_weather, invalid_weather = validate_weather(weather_docs)
+                if invalid_weather:
+                    logger.warning(
+                        "Validación weather: %d documentos rechazados por schema (%.1f%%)",
+                        len(invalid_weather),
+                        100.0 * len(invalid_weather) / len(weather_docs),
+                    )
+                weather_docs = [m.model_dump() for m in valid_weather]
 
             if args.dry_run:
                 logger.info(

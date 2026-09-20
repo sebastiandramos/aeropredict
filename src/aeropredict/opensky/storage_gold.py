@@ -80,7 +80,30 @@ logger = logging.getLogger(__name__)
 # Conexión perezosa
 _conn: Any = None
 
-SCHEMA_SQL = """
+# DDL del feature store — fuente única de verdad (la usan SCHEMA_SQL,
+# scripts/build_feature_store.py y _reconcile_feature_store_schema).
+FEATURE_STORE_DDL = """
+CREATE TABLE IF NOT EXISTS gold.feature_store (
+    aena_airport_iata   VARCHAR(4) NOT NULL,
+    flight_number       VARCHAR(20) NOT NULL,
+    flight_type         VARCHAR(20) NOT NULL,
+    scheduled_local     VARCHAR(30) NOT NULL,
+    hora_vuelo          INTEGER NOT NULL,
+    dia_semana          INTEGER NOT NULL,
+    airline_iata        VARCHAR(4),
+    other_airport_iata  VARCHAR(4),
+    temperatura_metar   FLOAT,
+    punto_rocio_metar   FLOAT,
+    relh                FLOAT,
+    retraso_minutos     FLOAT,
+    retraso_10_min      VARCHAR(20),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (aena_airport_iata, flight_number, flight_type, scheduled_local)
+);
+"""
+
+SCHEMA_SQL = (
+    """
 CREATE SCHEMA IF NOT EXISTS gold;
 
 CREATE TABLE IF NOT EXISTS gold.daily_airport_traffic (
@@ -167,25 +190,9 @@ CREATE TABLE IF NOT EXISTS gold.weather (
 );
 
 CREATE INDEX IF NOT EXISTS idx_weather_airport_date ON gold.weather (airport_code, flight_date);
-
-CREATE TABLE IF NOT EXISTS gold.feature_store (
-    aena_airport_iata   VARCHAR(4) NOT NULL,
-    flight_number       VARCHAR(20) NOT NULL,
-    flight_type         VARCHAR(20) NOT NULL,
-    scheduled_local     VARCHAR(30) NOT NULL,
-    hora_vuelo          INTEGER NOT NULL,
-    dia_semana          INTEGER NOT NULL,
-    airline_iata        VARCHAR(4),
-    other_airport_iata  VARCHAR(4),
-    temperatura_metar   FLOAT,
-    punto_rocio_metar   FLOAT,
-    relh                FLOAT,
-    retraso_minutos     FLOAT,
-    retraso_10_min      VARCHAR(20),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (aena_airport_iata, flight_number, flight_type, scheduled_local)
-);
-
+"""
+    + FEATURE_STORE_DDL
+    + """
 CREATE TABLE IF NOT EXISTS gold.aena_infovuelos (
     id                  SERIAL PRIMARY KEY,
     snapshot_at_utc     TIMESTAMPTZ NOT NULL,
@@ -315,6 +322,7 @@ CREATE TABLE IF NOT EXISTS gold.runways (
 
 CREATE INDEX IF NOT EXISTS idx_runways_surface ON gold.runways (surface);
 """
+)
 
 
 def _get_conn():
@@ -378,6 +386,122 @@ def _reconcile_aena_gold_unique(conn: Any) -> None:
             "No se pudo reconciliar el unique key de gold.aena_infovuelos "
             f"({exc}). Ejecuta manualmente: {AENA_MIGRATION_FALLBACK}"
         ) from exc
+
+
+FEATURE_STORE_COLUMNS_SQL = """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'gold' AND table_name = 'feature_store'
+"""
+
+
+def _reconcile_feature_store_schema(conn: Any, dry_run: bool = False) -> bool | None:
+    """Detecta y migra un gold.feature_store con el schema antiguo (28 columnas).
+
+    El bug de producción: Neon conservaba la tabla antigua de 28 columnas
+    (icao24, flight_date, ...) y ``CREATE TABLE IF NOT EXISTS`` la saltaba en
+    silencio, rompiendo la vista de inferencia. Esta función consulta las
+    columnas reales de la tabla y, si no son las del schema nuevo (13 columnas),
+    dropea y recrea la tabla con ``FEATURE_STORE_DDL``.
+
+    Args:
+        conn: Conexión PostgreSQL (autocommit activo).
+        dry_run: Si True, no ejecuta el DROP+CREATE; solo informa.
+
+    Returns:
+        True si se migró (DROP + CREATE ejecutados),
+        False si no-op (schema nuevo o tabla inexistente),
+        None si dry_run y habría migración.
+    """
+    with conn.cursor() as cur:
+        cur.execute(FEATURE_STORE_COLUMNS_SQL)
+        cols = [row[0] for row in cur.fetchall()]
+    if "hora_vuelo" in cols:
+        return False
+    if not cols:
+        return False
+    if dry_run:
+        logger.warning(
+            "gold.feature_store has a stale schema (%d columns); a real run "
+            "would DROP+recreate it and clear the checkpoint to repopulate.",
+            len(cols),
+        )
+        return None
+    logger.info(
+        "Reconciling gold.feature_store: stale schema detected (%d columns). "
+        "Dropping and recreating the table...",
+        len(cols),
+    )
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS gold.feature_store CASCADE")
+        cur.execute(FEATURE_STORE_DDL)
+    return True
+
+
+METAR_COLUMNS_SQL = """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'gold' AND table_name = 'metar'
+"""
+
+
+# Columnas del esquema canónico de gold.metar: (nombre, tipo DDL).
+METAR_CANONICAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("icao_id", "VARCHAR(8) NOT NULL"),
+    ("raw_ob", "TEXT"),
+    ("receipt_time", "TIMESTAMPTZ"),
+    ("obs_time", "BIGINT NOT NULL"),
+    ("temp", "FLOAT"),
+    ("dewp", "FLOAT"),
+    ("relh", "FLOAT"),
+    ("wdir", "INTEGER"),
+    ("wspd", "INTEGER"),
+    ("wgst", "INTEGER"),
+    ("visib", "VARCHAR(16)"),
+    ("altim", "FLOAT"),
+    ("flt_cat", "VARCHAR(8)"),
+    ("clouds_base", "INTEGER"),
+    ("ingested_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+)
+
+
+def _reconcile_metar_schema(conn: Any, dry_run: bool = False) -> list[str] | None:
+    """Añade a gold.metar las columnas del esquema canónico que falten.
+
+    Mismo bug de producción que feature_store: Neon conservaba una gold.metar
+    creada antes de añadir ``relh`` y ``CREATE TABLE IF NOT EXISTS`` la saltaba
+    en silencio (rompía ``build_feature_store`` con "column relh does not
+    exist"). A diferencia del reconcile de feature_store, aquí NO se dropea la
+    tabla: solo se añaden las columnas ausentes vía ``ALTER TABLE ... ADD
+    COLUMN IF NOT EXISTS`` (preserva datos y es idempotente).
+
+    Args:
+        conn: Conexión PostgreSQL (autocommit activo).
+        dry_run: Si True, no ejecuta los ALTER; solo informa.
+
+    Returns:
+        Lista de columnas añadidas,
+        [] si no-op (todas las columnas canónicas presentes),
+        None si dry_run y habría cambios.
+    """
+    with conn.cursor() as cur:
+        cur.execute(METAR_COLUMNS_SQL)
+        existing = {row[0] for row in cur.fetchall()}
+    missing = [name for name, _ in METAR_CANONICAL_COLUMNS if name not in existing]
+    if not missing:
+        return []
+    if dry_run:
+        logger.warning(
+            "gold.metar is missing column(s) %s; a real run would ALTER the table",
+            ", ".join(missing),
+        )
+        return None
+    with conn.cursor() as cur:
+        for name, ddl in METAR_CANONICAL_COLUMNS:
+            if name in missing:
+                cur.execute(f"ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS {name} {ddl}")
+    logger.info("gold.metar reconciled: added column(s) %s", ", ".join(missing))
+    return missing
 
 
 # ===================================================================
@@ -894,6 +1018,7 @@ def write_metar_gold(metar_reports: list[dict[str, Any]]) -> int:
         )
 
     conn = _get_conn()
+    _reconcile_metar_schema(conn)
     with conn.cursor() as cur:
         execute_values(
             cur,

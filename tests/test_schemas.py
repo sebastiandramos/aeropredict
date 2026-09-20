@@ -18,7 +18,6 @@ from aeropredict.schemas import (
     AircraftDocument,
     BronzeFlight,
     DailyAirportTraffic,
-    FeatureStoreRow,
     FlightDocument,
     GoldAircraft,
     GoldFlight,
@@ -303,23 +302,6 @@ class TestGoldLayer:
         )
         assert h.hour == 14
 
-    def test_feature_store_row(self) -> None:
-        """FeatureStoreRow with typical ML features."""
-        fs = FeatureStoreRow(
-            icao24="ABCDEF",
-            flight_date=TODAY_UTC,
-            callsign="IBE1234",
-            departure_airport="LEMD",
-            arrival_airport="LEBL",
-            delay_minutes=15.0,
-            airborne_minutes=120.0,
-            departure_hour=10,
-            day_of_week=1,
-            month=6,
-        )
-        assert fs.delay_minutes == 15.0
-        assert fs.airborne_minutes == 120.0
-
 
 # ===========================================================================
 # VALIDATION ERRORS
@@ -386,24 +368,6 @@ class TestValidationErrors:
         with pytest.raises(ValidationError, match="Unknown schedule source"):
             ScheduleDocument(source="unknown_provider")
 
-    def test_feature_store_day_of_week(self) -> None:
-        """day_of_week must be 1-7."""
-        with pytest.raises(ValidationError, match="day_of_week must be 1-7"):
-            FeatureStoreRow(
-                icao24="ABCDEF",
-                flight_date=TODAY_UTC,
-                day_of_week=0,
-            )
-
-    def test_feature_store_month(self) -> None:
-        """month must be 1-12."""
-        with pytest.raises(ValidationError, match="month must be 1-12"):
-            FeatureStoreRow(
-                icao24="ABCDEF",
-                flight_date=TODAY_UTC,
-                month=13,
-            )
-
 
 # ===========================================================================
 # SERIALIZATION
@@ -447,21 +411,6 @@ class TestSerialization:
         json_str = w.model_dump_json()
         recovered = WeatherDocument.model_validate_json(json_str)
         assert recovered == w
-
-    def test_feature_store_roundtrip(self) -> None:
-        """FeatureStoreRow serializes and deserializes."""
-        fs = FeatureStoreRow(
-            icao24="ABCDEF",
-            flight_date=TODAY_UTC,
-            delay_minutes=15.0,
-            airborne_minutes=120.0,
-            departure_hour=10,
-            day_of_week=1,
-            month=6,
-        )
-        json_str = fs.model_dump_json()
-        recovered = FeatureStoreRow.model_validate_json(json_str)
-        assert recovered == fs
 
     def test_json_keys(self) -> None:
         """Serialized JSON has snake_case keys (not camelCase)."""
