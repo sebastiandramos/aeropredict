@@ -105,7 +105,7 @@
 .status-version {
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  opacity: 0.8;
+  opacity: 1;
   border-left: 1px solid currentColor;
   padding-left: var(--space-2);
 }
