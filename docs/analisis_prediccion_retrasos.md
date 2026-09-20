@@ -41,7 +41,7 @@
 |---------|--------|---------|
 | **hora_salida** | `first_seen` | Hora del día + minuto de salida |
 | **hora_llegada** | `last_seen` | Hora del día + minuto de llegada |
-| **dia_semana** | `first_seen` | Lunes=0, Domingo=6 |
+| **dia_semana** | `first_seen` | Lunes=1, Domingo=7 (ISO) |
 | **mes** | `first_seen` | Estacionalidad |
 | **aerolinea** | `callsign[:3]` | Mapear callsign → aerolínea (tabla interna, ej: IBE=Iberia, RYR=Ryanair, VLG=Vueling) |
 | **distancia_ruta** | Lat/Lon fijo por ICAO airport code | Distancia ortodrómica entre aeropuertos |
@@ -227,7 +227,7 @@ Esto permite que errores de formato en una minoría de filas no bloqueen la inge
 | Silver | `validate_weather` | `WeatherDocument` | MongoDB `weather` |
 | Silver | `validate_aircraft` | `AircraftDocument` | MongoDB `aircraft` |
 | Silver | `validate_schedules` | `ScheduleDocument` | MongoDB `schedules` |
-| Gold | `validate_feature_store` | `FeatureStoreRow` | PostgreSQL `gold.feature_store` |
+| Gold | — | — | PostgreSQL `gold.feature_store` (13 columnas, PK `(aena_airport_iata, flight_number, flight_type, scheduled_local)`) |
 
 ### 7.4 Normalización
 
@@ -318,16 +318,15 @@ Reglas aplicadas por `field_validator` en cada capa:
 
 | Archivo | Tests | Lo que valida |
 |---------|-------|---------------|
-| `test_validators.py` | 17 | Validación Pydantic no bloqueante: `validate_flights`, `validate_weather`, `validate_aircraft`, `validate_feature_store`, `validate_schedules`, `validate_state_vectors` |
+| `test_validators.py` | 15 | Validación Pydantic no bloqueante: `validate_flights`, `validate_weather`, `validate_aircraft`, `validate_schedules`, `validate_state_vectors` |
 | `test_data_quality.py` | 37 | Desduplicación (clave `(icao24, first_seen, callsign)`), normalización (uppercase, UTC, no negativos), manejo de nulos (pass-through vs drop), completitud (≥80% filas no nulas en columnas críticas) |
-| `test_feature_completeness.py` | 27 | Schema `FeatureStoreRow`: 28 campos presentes, frozen, extra-forbid, rangos (`departure_hour` 0-23, `day_of_week` 1-7, `month` 1-12), nulos opcionales, serialización JSON |
 | `test_schemas.py` | — | Validación de modelos Pydantic (todos los `*Document`, `BronzeFlight`, `GoldFlight`, etc.) |
 | `test_extract_to_bronze.py` | — | Extracción mock → Delta Lake (Bronze) |
 | `test_extract_flights.py` | — | Parseo de respuestas OpenSky |
 | `test_bronze_to_silver.py` | — | Transformación Bronze Delta → MongoDB Silver |
 | `test_silver_to_gold.py` | — | Agregaciones Silver → Gold (MongoDB → PostgreSQL) |
 | `test_entities.py` | — | Entidades Gold (flights, aircraft, weather) |
-| `test_feature_store.py` | — | Feature store: JOIN de múltiples fuentes, imputación, escritura PostgreSQL |
+| `test_build_feature_store.py` | — | Feature store: `compute_retraso`, `compute_retraso_10_min`, selección METAR sin fuga de datos, conversión local→UTC |
 | `test_storage_silver.py` | — | Operaciones MongoDB (CRUD, checkpoints) |
 | `test_storage_gold.py` | — | Operaciones PostgreSQL (CRUD, upserts) |
 | `test_models.py` | — | Modelos de negocio (validadores de negocio, no solo esquema) |
@@ -340,7 +339,7 @@ Reglas aplicadas por `field_validator` en cada capa:
 | **Extract → Bronze** | `test_extract_to_bronze`, `test_extract_flights` | Datos mock → verificar escritura Delta Lake + parseo correcto |
 | **Bronze → Silver** | `test_bronze_to_silver`, `test_schemas` | Flight dicts → `BronzeFlight.model_validate` → `FlightDocument` |
 | **Silver → Gold** | `test_silver_to_gold`, `test_entities`, `test_storage_gold` | Datos MongoDB mock → verificar agregaciones y upserts PostgreSQL |
-| **Feature store** | `test_feature_store`, `test_feature_completeness` | Feature dicts → `FeatureStoreRow.model_validate` → verificar campos, rangos, nulos |
+| **Feature store** | `test_build_feature_store` | Helpers de `build_feature_store.py`: retraso, target binario, selección METAR, conversión local→UTC |
 | **Validación** | `test_validators` | Filas válidas + inválidas → verificar split correcto y logging |
 | **Calidad de datos** | `test_data_quality` | Datos con nulos/repetidos → verificar dedup, normalización, completitud ≥80% |
 

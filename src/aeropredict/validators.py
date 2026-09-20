@@ -96,16 +96,8 @@ def validate_schedules(
     return _validate_generic(schedules, schemas.ScheduleDocument, "schedules")
 
 
-def validate_feature_store(
-    features: list[dict[str, Any]],
-) -> tuple[list[schemas.FeatureStoreRow], list[dict[str, Any]]]:
-    """Validate feature store rows (Gold feature store schema)."""
-    return _validate_generic(features, schemas.FeatureStoreRow, "feature_store")
-
-
 __all__ = [
     "validate_aircraft",
-    "validate_feature_store",
     "validate_flights",
     "validate_schedules",
     "validate_state_vectors",

@@ -166,12 +166,16 @@ def collect_weather(
                 total += 1
                 continue
 
-            # Bronze: guardar el payload crudo tal cual llegó de la API
+            # Bronze: guardar el payload enriquecido del adapter (incluye
+            # airport_code + raw). bronze_to_silver._build_weather_docs necesita
+            # airport_code para construir los documentos hora a hora; escribir
+            # solo data["raw"] (payload crudo de Open-Meteo) rompía la promoción
+            # a Silver (colección weather siempre vacía).
             write_raw_json(
                 "weather_openmeteo",
                 "/v1/archive",
                 {"latitude": data["latitude"], "longitude": data["longitude"]},
-                data.get("raw", data),
+                data,
                 delta_root,
             )
 

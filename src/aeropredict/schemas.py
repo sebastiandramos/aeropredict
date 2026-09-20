@@ -642,92 +642,6 @@ class HourlyDistribution(BaseModel):
 
 
 # ===================================================================
-# FEATURE STORE
-# ===================================================================
-
-
-class FeatureStoreRow(BaseModel):
-    """Gold: feature store row in PostgreSQL ``gold.feature_store``.
-
-    Flat feature vector ready for ML model training.
-    Primary key: (icao24, flight_date).
-    """
-
-    icao24: str
-    flight_date: datetime
-    callsign: str | None = None
-    departure_airport: str | None = None
-    arrival_airport: str | None = None
-    delay_minutes: float | None = None
-    airborne_minutes: float | None = None
-    departure_hour: int | None = None
-    day_of_week: int | None = None
-    month: int | None = None
-    aircraft_type: str | None = None
-    aircraft_manufacturer: str | None = None
-    aircraft_operator: str | None = None
-    aircraft_age_years: float | None = None
-    route_daily_traffic: int | None = None
-    route_total_density: int | None = None
-    departure_airport_hourly_traffic: int | None = None
-    arrival_airport_hourly_traffic: int | None = None
-    dep_temperature: float | None = None
-    dep_precipitation: float | None = None
-    dep_wind_speed: float | None = None
-    dep_visibility: float | None = None
-    arr_temperature: float | None = None
-    arr_precipitation: float | None = None
-    arr_wind_speed: float | None = None
-    arr_visibility: float | None = None
-    schedule_source: str | None = None
-    created_at: datetime | None = None
-
-    model_config: dict[str, Any] = {"frozen": True, "extra": "forbid"}
-
-    _icao24 = field_validator("icao24")(_check_icao24)
-    _callsign = field_validator("callsign")(_check_callsign)
-    _dep_airport = field_validator("departure_airport", "arrival_airport")(
-        _check_airport_code
-    )
-    _flight_date = field_validator("flight_date")(_ensure_utc)
-    _created = field_validator("created_at")(_ensure_utc)
-    _age = field_validator("aircraft_age_years")(_non_negative)
-    _delay = field_validator("delay_minutes")(_non_negative)
-    _airborne = field_validator("airborne_minutes")(_non_negative)
-
-    @field_validator("departure_hour")
-    @classmethod
-    def _check_hour(cls, v: int | None) -> int | None:
-        if v is not None and not (0 <= v <= 23):
-            raise ValueError(f"departure_hour must be 0-23, got {v}")
-        return v
-
-    @field_validator("day_of_week")
-    @classmethod
-    def _check_dow(cls, v: int | None) -> int | None:
-        if v is not None and not (1 <= v <= 7):
-            raise ValueError(f"day_of_week must be 1-7, got {v}")
-        return v
-
-    @field_validator("month")
-    @classmethod
-    def _check_month(cls, v: int | None) -> int | None:
-        if v is not None and not (1 <= v <= 12):
-            raise ValueError(f"month must be 1-12, got {v}")
-        return v
-
-    @field_validator("schedule_source")
-    @classmethod
-    def _check_source(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        allowed = {"aerodatabox", "aviationstack"}
-        if v.lower() not in allowed:
-            raise ValueError(f"Unknown schedule source: '{v}'")
-        return v.lower()
-
-
-# ===================================================================
 # Re-export commonly used names at schema layer
 # ===================================================================
 
@@ -741,7 +655,6 @@ __all__ = [
     "AircraftDocument",
     "BronzeFlight",
     "DailyAirportTraffic",
-    "FeatureStoreRow",
     "FlightDocument",
     "GoldAircraft",
     "GoldFlight",

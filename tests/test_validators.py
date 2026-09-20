@@ -57,14 +57,6 @@ def test_validate_weather_and_aircraft():
     assert not a_invalid
 
 
-def test_validate_feature_store_rejects_invalid():
-    # missing required flight_date
-    rows = [{"icao24": "ABCDEF"}, {"icao24": "ABCDEF", "flight_date": NOW}]
-    valid, invalid = validators.validate_feature_store(rows)
-    assert len(valid) == 1
-    assert len(invalid) == 1
-
-
 def test_validate_schedules_invalid_source(caplog):
     caplog.set_level(logging.INFO)
     rows = [{"source": "unknown", "callsign": "IBE1234"}]
@@ -125,11 +117,6 @@ def test_large_dataset_performance_sanity():
     valid, invalid = validators.validate_flights(rows)
     assert len(valid) == 1000
     assert len(invalid) == 0
-
-
-def test_validate_feature_store_empty():
-    v, iv = validators.validate_feature_store([])
-    assert v == [] and iv == []
 
 
 def test_validate_state_vectors_empty():

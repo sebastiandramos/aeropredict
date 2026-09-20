@@ -230,15 +230,15 @@ Seguimiento por tarjeta del tablero Trello
 | Seleccionar fuentes finales | ✅ | `docs/analisis_prediccion_retrasos.md` |
 | Integrar nuevas fuentes viables | ✅ | OpenSky, AENA, METAR, festivos, EUROCONTROL, OurAirports, NOTAM, aviación (PR #7, PR #9) |
 
-### Data Pipeline — ✅ 3/5 · 🟡 2/5 (en curso)
+### Data Pipeline — ✅ 5/5
 
 | Tarjeta | Estado | Dónde |
 |---|---|---|
 | Bronze / Silver / Gold | ✅ | `bronze_to_silver.py`, `silver_to_gold.py`, `silver_to_gold_entities.py` |
 | MongoDB / PostgreSQL / R2 | ✅ | CI + `docker-compose.yml` (local) |
 | Feature Store | ✅ | `build_feature_store.py` → `gold.feature_store` |
-| Validación de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
-| Limpieza de datos | 🟡 | rama `feat/ml-pipeline` (compañero) |
+| Validación de datos | ✅ | `aeropredict.schemas` + `aeropredict.validators` cableados en `bronze_to_silver.py` (flights + weather) y `build_feature_store.py` (invariantes) |
+| Limpieza de datos | ✅ | dedup en `bronze_to_silver.py`, `ON CONFLICT` en Gold, `DISTINCT ON` en feature store, normalización de schema en weather |
 
 ### Modelos — 🟡 en curso (compañero)
 
@@ -271,21 +271,3 @@ predicción de `feat/ml-pipeline` en cuanto esté disponible (`.env` con
 | Features del modelo | 🟡 | pendiente de conclusions del modelo (plantilla propuesta en `docs/`) |
 | Limitaciones | 🟡 | pendiente de conclusions del modelo |
 | Resultados del modelo | 🟡 | pendiente de conclusions del modelo |
-
-### Negocio — ✅ documentado (Tomás)
-
-Documento completo en `TFM - Modelo Negocio.md` (raíz del repo): oportunidad de
-negocio, clientes y propuesta de valor, Business Model Canvas, DAFO, cinco
-fuerzas de Porter, modelo de ingresos y precios, presupuesto y cuenta de
-resultados del año 1, aspectos legales y riesgos, conclusión de viabilidad y
-bibliografía. Pendiente de revisión del tutor.
-
-| Tarjeta | Estado | Dónde |
-|---|---|---|
-| Business Model Canvas | ✅ | `TFM - Modelo Negocio.md` §3 |
-| Propuesta de valor | ✅ | `TFM - Modelo Negocio.md` §2 |
-| Cuenta de resultados | ✅ | `TFM - Modelo Negocio.md` §7 |
-| Clientes objetivo | ✅ | `TFM - Modelo Negocio.md` §2 |
-| Riesgos del negocio | ✅ | `TFM - Modelo Negocio.md` §8 |
-| Costes e ingresos | ✅ | `TFM - Modelo Negocio.md` §6–7 |
-| Competidores | ✅ | `TFM - Modelo Negocio.md` §5 |
