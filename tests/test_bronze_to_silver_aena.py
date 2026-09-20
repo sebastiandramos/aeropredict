@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -121,9 +121,13 @@ def _monkeypatch_deltatable(
     monkeypatch: pytest.MonkeyPatch,
     flights_table: pa.Table,
     aena_rows: list[dict[str, Any]] | None = None,
-) -> None:
+) -> type:
     """Mock ``deltalake.DeltaTable``: opensky → *flights_table*, AENA →
-    *aena_rows* table, other sources → schema-correct empty tables."""
+    *aena_rows* table, other sources → schema-correct empty tables.
+
+    Returns the mock class so tests can assert the predicate filters passed
+    to ``to_pyarrow_table`` (recorded on the class as ``latest_filters``).
+    """
 
     aena_table = _aena_delta_table(aena_rows or [])
 
@@ -159,6 +163,8 @@ def _monkeypatch_deltatable(
     }
 
     class MockDeltaTable:
+        latest_filters: Any = None  # predicate filters passed to to_pyarrow_table
+
         def __init__(self, table_uri: str, storage_options: Any = None) -> None:
             self._table = flights_table  # default: flights
             for key, tbl in _source_tables.items():
@@ -166,7 +172,8 @@ def _monkeypatch_deltatable(
                     self._table = tbl
                     break
 
-        def to_pyarrow_table(self) -> pa.Table:
+        def to_pyarrow_table(self, filters: Any = None) -> pa.Table:
+            type(self).latest_filters = filters
             return self._table
 
         def partitions(self) -> list[dict[str, str]]:
@@ -177,6 +184,7 @@ def _monkeypatch_deltatable(
             return [{"ingestion_date": d} for d in unique_dates]
 
     monkeypatch.setattr("deltalake.DeltaTable", MockDeltaTable)
+    return MockDeltaTable
 
 
 class _FakeDatetime(datetime):
@@ -241,6 +249,38 @@ class TestAenaHoursDiscovery:
         hours = _get_aena_bronze_hours("/tmp/fake", window_days=0)
 
         assert hours == []
+
+    def test_override_pushes_down_day_range_filter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With date_override, the Delta read is filtered to that calendar day."""
+        mock_cls = _monkeypatch_deltatable(
+            monkeypatch, _empty_flights_table(), [_aena_row(HOUR_10)]
+        )
+
+        _get_aena_bronze_hours("/tmp/fake", date_override="2026-06-15")
+
+        # The day range is [override 00:00, next day 00:00)
+        assert mock_cls.latest_filters == [
+            ("fetched_at", ">=", datetime(2026, 6, 15, 0, 0, 0, tzinfo=UTC)),
+            ("fetched_at", "<", datetime(2026, 6, 16, 0, 0, 0, tzinfo=UTC)),
+        ]
+
+    def test_window_pushes_down_range_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without override, the Delta read is filtered to [now-window, now]."""
+        mock_cls = _monkeypatch_deltatable(
+            monkeypatch, _empty_flights_table(), [_aena_row(HOUR_10)]
+        )
+        monkeypatch.setattr(bronze_to_silver, "datetime", _FakeDatetime)
+
+        _get_aena_bronze_hours("/tmp/fake", window_days=1)
+
+        # _FakeDatetime.now() == HOUR_12 → window = [HOUR_12-1d, HOUR_12]
+        one_day = timedelta(days=1)
+        assert mock_cls.latest_filters == [
+            ("fetched_at", ">=", HOUR_12 - one_day),
+            ("fetched_at", "<=", HOUR_12),
+        ]
 
     def test_empty_table_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A bronze AENA table with no rows yields no hours."""
@@ -309,11 +349,16 @@ class TestAenaRead:
             _aena_row(HOUR_10, raw_flights=[_raw_aena_flight(numVuelo="1")]),
             _aena_row(HOUR_11, raw_flights=[_raw_aena_flight(numVuelo="2")]),
         ]
-        _monkeypatch_deltatable(monkeypatch, _empty_flights_table(), rows)
+        mock_cls = _monkeypatch_deltatable(monkeypatch, _empty_flights_table(), rows)
 
         docs = _read_bronze_aena_infovuelos("/tmp/fake", HOUR_10)
 
         assert [d["raw_flight_number"] for d in docs] == ["1"]
+        # The Delta read must push down the exact-hour range [hour, hour+1h)
+        assert mock_cls.latest_filters == [
+            ("fetched_at", ">=", HOUR_10),
+            ("fetched_at", "<", HOUR_11),
+        ]
 
     def test_unknown_iata_gives_none_icao(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An IATA code absent from the map yields icao24_airport=None."""

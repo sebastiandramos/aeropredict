@@ -178,7 +178,7 @@ def _monkeypatch_deltatable(
                     self._table = tbl
                     break
 
-        def to_pyarrow_table(self) -> pa.Table:
+        def to_pyarrow_table(self, filters: Any = None) -> pa.Table:
             return self._table
 
         def partitions(self) -> list[dict[str, str]]:

@@ -510,7 +510,15 @@ def _read_bronze_weather(
         logger.warning("No se pudo leer bronze/weather_openmeteo: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: the weather table is unpartitioned and grows daily,
+    # so a full read is expensive. Filter to the target day at scan time.
+    filters: list[tuple[str, str, Any]] | None = None
+    if target_date:
+        day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        filters = [("fetched_at", ">=", day_start), ("fetched_at", "<", day_end)]
+
+    table = dt.to_pyarrow_table(filters=filters)
     if target_date:
         import pyarrow as pa
         import pyarrow.compute as pc
@@ -568,7 +576,22 @@ def _get_aena_bronze_hours(
         logger.warning("No se pudo leer bronze/aena_infovuelos: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: bronze/aena_infovuelos is unpartitioned and grows
+    # hourly, so a full scan is expensive. Push the hour window into Delta at
+    # scan time and keep the in-memory floor() filter below as a safety net.
+    if override is not None:
+        day_start = datetime(override.year, override.month, override.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        filters: list[tuple[str, str, Any]] | None = [
+            ("fetched_at", ">=", day_start),
+            ("fetched_at", "<", day_end),
+        ]
+    else:
+        now = datetime.now(UTC)
+        window_start = now - timedelta(days=window_days)
+        filters = [("fetched_at", ">=", window_start), ("fetched_at", "<=", now)]
+
+    table = dt.to_pyarrow_table(filters=filters)
     if table.num_rows == 0:
         return []
 
@@ -610,7 +633,13 @@ def _read_bronze_aena_infovuelos(
         logger.warning("No se pudo leer bronze/aena_infovuelos: %s", exc)
         return []
 
-    table = dt.to_pyarrow_table()
+    # Predicate pushdown: only read the requested hour instead of the full
+    # unpartitioned table. The in-memory floor() filter stays as a safety net.
+    filters: list[tuple[str, str, Any]] | None = [
+        ("fetched_at", ">=", hour),
+        ("fetched_at", "<", hour + timedelta(hours=1)),
+    ]
+    table = dt.to_pyarrow_table(filters=filters)
     import pyarrow as pa
     import pyarrow.compute as pc
 
