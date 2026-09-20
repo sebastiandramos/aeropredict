@@ -411,7 +411,7 @@ class TestBuildFeatureStoreIntegration:
         # Patch METAR fetch
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, icao, epoch: [
+            lambda c, icao, epoch, min_epoch=None: [
                 {"obs_time": int(epoch) - 3600, "temp": 25.0, "dewp": 10.0, "relh": 40.0},
             ],
         )
@@ -439,7 +439,7 @@ class TestBuildFeatureStoreIntegration:
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, icao, epoch: [
+            lambda c, icao, epoch, min_epoch=None: [
                 {"obs_time": int(epoch) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
             ],
         )
@@ -479,7 +479,7 @@ class TestBuildFeatureStoreIntegration:
         )
         monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
-        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e: [])
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
 
         captured_rows: list = []
         monkeypatch.setattr(
@@ -502,7 +502,7 @@ class TestBuildFeatureStoreIntegration:
         )
         monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
-        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e: [])
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
 
         captured_rows: list = []
         monkeypatch.setattr(
@@ -542,7 +542,9 @@ class TestBuildFeatureStoreIntegration:
         # METAR obs_time is AFTER the cut (future observation = leakage)
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, i, e: [{"obs_time": int(e) + 3600, "temp": 99.0, "dewp": 0.0, "relh": 0.0}],
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) + 3600, "temp": 99.0, "dewp": 0.0, "relh": 0.0},
+            ],
         )
 
         captured_rows: list = []
@@ -573,7 +575,9 @@ class TestBuildFeatureStoreIntegration:
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, i, e: [{"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0}],
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
+            ],
         )
         monkeypatch.setattr(
             bfs, "compute_retraso_10_min",
@@ -589,6 +593,55 @@ class TestBuildFeatureStoreIntegration:
         n = bfs.build_feature_store()
         assert n == 0
         assert captured_rows == []
+
+    def test_metar_preload_covers_later_flights(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Given: two departures for the same airport, the first outside METAR
+        coverage (August) and the second inside it (2026-09-18). When: build.
+        Then: the METAR fetch happens ONCE over the GLOBAL window and the later
+        flight gets non-NULL weather (the old lazy cache froze the window to
+        the first flight's cut_epoch → NULL features)."""
+        early = _make_departure_row("IB0001", "MAD", "2026-08-03T12:00:00")
+        late = _make_departure_row("IB0002", "MAD", "2026-09-18T12:00:00")
+        monkeypatch.setattr(bfs, "_get_conn", lambda: FakeConn())
+        monkeypatch.setattr(bfs, "_fetch_deduped_departures", lambda c: [early, late])
+        monkeypatch.setattr(bfs, "get_checkpoint_set", lambda c: set())
+        monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
+
+        cut_late = bfs.scheduled_to_cut_epoch("2026-09-18T12:00:00")
+        obs = [
+            {"obs_time": int(cut_late) - 3600, "temp": 21.0, "dewp": 9.0, "relh": 55.0},
+        ]
+        fetch_calls: list[tuple] = []
+
+        def fake_fetch(c, icao, max_epoch, min_epoch=None):
+            fetch_calls.append((icao, min_epoch, max_epoch))
+            lo = min_epoch if min_epoch is not None else int(max_epoch) - 7 * 86400
+            return [r for r in obs if lo <= r["obs_time"] <= max_epoch]
+
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", fake_fetch)
+        captured_rows: list = []
+        monkeypatch.setattr(
+            bfs, "execute_values",
+            lambda cur, sql, al, **kw: captured_rows.extend(al),
+        )
+
+        n = bfs.build_feature_store()
+        assert n == 2
+        # ONE fetch (the preload) over the global window, not per-flight
+        assert len(fetch_calls) == 1
+        icao, min_epoch, max_epoch = fetch_calls[0]
+        assert icao == "LEMD"
+        assert min_epoch == bfs.scheduled_to_cut_epoch("2026-08-03T12:00:00") - 7 * 86400
+        assert max_epoch == cut_late
+        # Early flight: no METAR in its window → None (correct)
+        assert captured_rows[0][8] is None
+        # Late flight: inside coverage → the obs is joined (the bug fix)
+        assert captured_rows[1][8] == 21.0
+        assert captured_rows[1][9] == 9.0
+        assert captured_rows[1][10] == 55.0
 
 
 # ------------------------------------------------------------------
@@ -660,7 +713,7 @@ class TestFeatureStoreSchemaMigration:
             bfs, "_fetch_deduped_departures", lambda c: [_make_departure_row()],
         )
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
-        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e: [])
+        monkeypatch.setattr(bfs, "_fetch_metar_for_airport", lambda c, i, e, min_epoch=None: [])
 
         captured_rows: list = []
         monkeypatch.setattr(
@@ -721,7 +774,9 @@ class TestFeatureStoreSchemaMigration:
         monkeypatch.setattr(bfs, "_resolve_icao", lambda iata, c: "LEMD")
         monkeypatch.setattr(
             bfs, "_fetch_metar_for_airport",
-            lambda c, i, e: [{"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0}],
+            lambda c, i, e, min_epoch=None: [
+                {"obs_time": int(e) - 600, "temp": 22.5, "dewp": 8.0, "relh": 35.0},
+            ],
         )
 
         captured_rows: list = []
