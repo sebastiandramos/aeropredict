@@ -96,7 +96,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      <main id="main-content" className="main">
+      <main id="main-content" className="main" tabIndex={-1}>
         {session ? (
           view === 'my-flights' ? (
             <MyFlights onSessionExpired={handleSessionExpired} />

@@ -32,17 +32,17 @@ visualization on a projector/screen).
 | `--color-border-strong` | `#d4d4d8` | Focused/active borders |
 | `--color-text` | `#3f3f46` | Body text |
 | `--color-text-secondary` | `#374151` | Labels, captions, hints |
-| `--color-text-muted` | `#a1a1aa` | Disabled, placeholders |
+| `--color-text-muted` | `#71717a` | Disabled, placeholders |
 | `--color-text-strong` | `#18181b` | Headings, key metrics |
 | `--color-accent` | `#4f46e5` | Primary action, focus (indigo) |
 | `--color-accent-hover` | `#4338ca` | Primary action hover |
 | `--color-accent-soft` | `#eef2ff` | Accent tint backgrounds |
 | `--color-accent-text` | `#ffffff` | Text on accent |
-| `--color-success` | `#16a34a` | On-time (green) |
+| `--color-success` | `#15803d` | On-time (green) |
 | `--color-success-soft` | `#f0fdf4` | On-time tint |
 | `--color-warning` | `#b45309` | Moderate delay (amber) |
 | `--color-warning-soft` | `#fffbeb` | Moderate tint |
-| `--color-danger` | `#dc2626` | Severe delay (red) |
+| `--color-danger` | `#b91c1c` | Severe delay (red) |
 | `--color-danger-soft` | `#fef2f2` | Severe tint |
 | `--color-info` | `#2563eb` | Neutral info accents |
 

@@ -378,6 +378,12 @@
   align-self: flex-start;
 }
 
+.advanced-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-sm);
+}
+
 .advanced-toggle:hover {
   color: var(--color-accent);
 }
@@ -414,6 +420,7 @@
   justify-content: center;
   gap: var(--space-2);
   padding: 0.625rem 1.25rem;
+  min-height: 44px;
   font-size: var(--text-body);
   font-weight: 600;
   color: var(--color-accent-text);
@@ -815,6 +822,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0.375rem 0.75rem;
+  min-height: 44px;
   font-size: var(--text-small);
   font-weight: 600;
   color: var(--color-text-secondary);
