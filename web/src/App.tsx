@@ -86,6 +86,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">Saltar al contenido</a>
       <Header
         status={status}
         modelVersion={modelVersion}
@@ -95,7 +96,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      <main className="main">
+      <main id="main-content" className="main">
         {session ? (
           view === 'my-flights' ? (
             <MyFlights onSessionExpired={handleSessionExpired} />

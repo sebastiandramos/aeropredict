@@ -366,7 +366,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
       )}
 
       {error && (
-        <p className="form-error" role="alert">
+        <p className="form-error" role="alert" aria-live="assertive">
           {error}
         </p>
       )}

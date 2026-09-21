@@ -760,6 +760,30 @@
   color: var(--color-text-secondary);
 }
 
+/* ---------- Skip link ---------- */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.skip-link:focus-visible {
+  position: fixed;
+  left: var(--space-4);
+  top: var(--space-4);
+  width: auto;
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  color: var(--color-text-strong);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-focus);
+  z-index: 1000;
+}
+
 /* ---------- Focus visible global ---------- */
 :focus-visible {
   outline: none;
@@ -842,7 +866,8 @@
 }
 
 .auth-tab {
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.75rem;
+  min-height: 44px;
   font-size: var(--text-small);
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -879,7 +904,8 @@
 }
 
 .nav-tab {
-  padding: 0.5rem 0.875rem;
+  padding: 0.625rem 0.875rem;
+  min-height: 44px;
   font-size: var(--text-small);
   font-weight: 600;
   color: var(--color-text-secondary);

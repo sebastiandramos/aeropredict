@@ -57,7 +57,7 @@ export default function Header({
           {session && (
             <div className="session">
               <span className="session-email">{session.email}</span>
-              <button type="button" className="btn-ghost" onClick={onLogout}>
+              <button type="button" className="btn-ghost" onClick={onLogout} aria-label="Cerrar sesión">
                 <LogOut size={16} aria-hidden="true" />
                 Salir
               </button>
