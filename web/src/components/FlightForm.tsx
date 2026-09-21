@@ -36,12 +36,14 @@ function AirportSelect({
   value,
   onChange,
   placeholder,
+  required,
 }: {
   id: string
   label: string
   value: string
   onChange: (icao: string) => void
   placeholder: string
+  required?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -81,6 +83,7 @@ function AirportSelect({
             aria-expanded={open}
             aria-controls={`${id}-listbox`}
             aria-autocomplete="list"
+            aria-required={required}
             value={open ? query : selected ? `${selected.icao} — ${selected.name}` : ''}
             placeholder={placeholder}
             onFocus={() => setOpen(true)}
@@ -220,7 +223,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
   }
 
   return (
-    <form className="form" onSubmit={handleSubmit} noValidate>
+    <form className="form" onSubmit={handleSubmit} noValidate aria-describedby={error ? "form-error" : undefined}>
       <div className="form-grid">
         <AirportSelect
           id="origin"
@@ -228,6 +231,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
           value={values.origin}
           onChange={(icao) => set('origin', icao)}
           placeholder="Buscar aeropuerto…"
+          required
         />
         <AirportSelect
           id="destination"
@@ -235,6 +239,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
           value={values.destination}
           onChange={(icao) => set('destination', icao)}
           placeholder="Buscar aeropuerto…"
+          required
         />
       </div>
 
@@ -252,6 +257,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
             value={values.airline}
             onChange={(e) => set('airline', e.target.value)}
             autoComplete="off"
+            aria-required="true"
           />
           <datalist id="airlines-list">
             {COMMON_AIRLINES.map((a) => (
@@ -270,6 +276,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
             type="date"
             value={values.departureDate}
             onChange={(e) => set('departureDate', e.target.value)}
+            aria-required="true"
           />
         </div>
 
@@ -283,6 +290,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
             type="time"
             value={values.departureTime}
             onChange={(e) => set('departureTime', e.target.value)}
+            aria-required="true"
           />
         </div>
       </div>
@@ -366,7 +374,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
       )}
 
       {error && (
-        <p className="form-error" role="alert" aria-live="assertive">
+        <p id="form-error" className="form-error" role="alert" aria-live="assertive">
           {error}
         </p>
       )}
