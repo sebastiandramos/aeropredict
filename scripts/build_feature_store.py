@@ -431,7 +431,9 @@ def build_feature_store(
                         epoch = int(ts.timestamp())
                     else:
                         epoch = int(ts)
-                    weather_for_select.append({"obs_time": epoch, "temp": w.get("temp"), "relh": w.get("relh")})
+                    weather_for_select.append(
+                        {"obs_time": epoch, "temp": w.get("temp"), "relh": w.get("relh")}
+                    )
                 except Exception:
                     continue
             weather_sel = select_cut_time_metar(weather_for_select, cut_epoch)
