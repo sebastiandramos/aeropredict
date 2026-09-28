@@ -233,7 +233,8 @@ def _fetch_weather_for_airport(
     if min_epoch is None:
         min_epoch = int(max_epoch) - 7 * 86400
     sql = """
-        SELECT timestamp, temperature_2m AS temp, relative_humidity_2m AS relh
+        SELECT timestamp, temperature_2m AS temp, relative_humidity_2m AS relh,
+               dew_point_2m AS dewp
         FROM gold.weather
         WHERE airport_code = %s AND timestamp >= to_timestamp(%s) AND timestamp <= to_timestamp(%s)
         ORDER BY timestamp ASC
@@ -432,14 +433,14 @@ def build_feature_store(
                     else:
                         epoch = int(ts)
                     weather_for_select.append(
-                        {"obs_time": epoch, "temp": w.get("temp"), "relh": w.get("relh")}
+                        {"obs_time": epoch, "temp": w.get("temp"), "relh": w.get("relh"), "dewp": w.get("dewp")}
                     )
                 except Exception:
                     continue
             weather_sel = select_cut_time_metar(weather_for_select, cut_epoch)
             if weather_sel:
                 temp = weather_sel.get("temp")
-                dewp = None  # Open-Meteo does not provide dew point in this schema
+                dewp = weather_sel.get("dewp")
                 relh = weather_sel.get("relh")
             else:
                 temp = None
