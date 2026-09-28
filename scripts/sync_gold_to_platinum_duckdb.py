@@ -16,8 +16,6 @@ import logging
 from pathlib import Path
 
 import duckdb
-import psycopg2
-from psycopg2.extras import execute_values
 
 from aeropredict.opensky.storage_gold import _get_conn
 
@@ -98,7 +96,6 @@ def sync_table(pg_conn, duck_con, schema_table: str, dry_run: bool = False) -> i
     cols = [d[0] for d in cur.description]
     cur.close()
 
-    col_defs = ", ".join([f'"{c}" TYPE' for c in cols])  # DuckDB will infer on create
     # Create table if not exists with dynamic schema using first batch
     # Simpler: create empty table with same columns using DuckDB's type inference
     duck_con.execute(f'DROP TABLE IF EXISTS "{duck_table}"')
@@ -130,8 +127,8 @@ def sync_table(pg_conn, duck_con, schema_table: str, dry_run: bool = False) -> i
         duck_con.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
         # We already inserted directly; for true idempotency we could have used MERGE.
         # For simplicity and performance, we keep the recreate approach when force is True,
-        # otherwise we assume table is empty. To make default idempotent, we recreate table each run.
-        # Recreate is safe for feature_store training use case.
+        # otherwise we assume table is empty. To make default idempotent, we recreate
+        # table each run. Recreate is safe for feature_store training use case.
         pass
 
     logger.info("Synced %d rows to %s", total, duck_table)
