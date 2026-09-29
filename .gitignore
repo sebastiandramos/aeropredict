@@ -253,3 +253,7 @@ models/
 # Trello board export (contiene datos personales de miembros del board)
 YfMRBhUT - tfm-aeropredict.json
 .opencode/opencode.json
+backfill_weather_missing.py
+inspect_metar.py
+verify_contrast.py
+qa-evidence/

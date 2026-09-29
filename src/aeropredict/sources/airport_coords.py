@@ -87,6 +87,7 @@ AIRPORT_COORDS: dict[str, tuple[float, float]] = {
     "LGAV": (37.9364, 23.9475),  # Atenas
     "LTFM": (41.2608, 28.7422),  # Estambul
     "LMML": (35.8575, 14.4775),  # Malta
+    "LRBB": (44.4957, 26.0801),  # Bucarest - Romania Civil Aeronautical Auth
     # --- Rusia ---
     "UUDD": (55.4100, 37.9061),  # Moscú Domodedovo
     "ULLI": (59.8004, 30.2625),  # San Petersburgo Pulkovo

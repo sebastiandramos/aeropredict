@@ -34,7 +34,7 @@ env:
 jobs:
   extract:
     name: "1/5 Extract → Bronze"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
   bronze_to_silver:
     name: "2/5 Bronze → Silver"
     needs: extract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -109,7 +109,7 @@ jobs:
   silver_to_gold:
     name: "3/5 Silver → Gold (flights)"
     needs: bronze_to_silver
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +128,7 @@ jobs:
   entities_to_gold:
     name: "4/5 Entity tables → Gold"
     needs: silver_to_gold
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +147,7 @@ jobs:
   build_feature_store:
     name: "5/5 Feature store"
     needs: entities_to_gold
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

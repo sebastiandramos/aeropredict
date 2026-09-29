@@ -222,6 +222,31 @@ def _fetch_metar_for_airport(
     return rows
 
 
+def _fetch_weather_for_airport(
+    pg_conn: Any, icao_id: str, max_epoch: float, min_epoch: float | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch Open-Meteo weather rows for an airport with timestamp <= max_epoch.
+
+    Returns rows sorted by timestamp ascending.
+    Used as silent fallback when METAR is unavailable.
+    """
+    if min_epoch is None:
+        min_epoch = int(max_epoch) - 7 * 86400
+    sql = """
+        SELECT timestamp, temperature_2m AS temp, relative_humidity_2m AS relh,
+               dew_point_2m AS dewp
+        FROM gold.weather
+        WHERE airport_code = %s AND timestamp >= to_timestamp(%s) AND timestamp <= to_timestamp(%s)
+        ORDER BY timestamp ASC
+    """
+    cur = pg_conn.cursor()
+    cur.execute(sql, (icao_id, int(min_epoch), int(max_epoch)))
+    cols = [desc[0] for desc in cur.description]
+    rows = [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+    cur.close()
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Main build
 # ---------------------------------------------------------------------------
@@ -298,13 +323,10 @@ def build_feature_store(
         logger.warning("No departure flights found in gold.aena_infovuelos")
         return 0
 
-    # -- METAR preload: {icao_id: [rows]} fetched ONCE per airport over the
-    # GLOBAL cut window. The old lazy cache keyed by ICAO froze the fetch
-    # window to the FIRST flight's cut_epoch, so later flights (whose
-    # departures fall inside METAR coverage) reused a stale/empty cache and
-    # got NULL weather features. Preloading over [min_sched - 7d, max_sched]
-    # fixes that with a single query per airport.
+    # -- METAR + Open-Meteo preload cache
+    # Fetch once per airport over global window to avoid stale cache.
     metar_cache: dict[str, list[dict[str, Any]]] = {}
+    weather_cache: dict[str, list[dict[str, Any]]] = {}
     scheds = [f["scheduled_local"] for f in departures if f.get("scheduled_local")]
     if scheds:
         min_cut = scheduled_to_cut_epoch(min(scheds)) - 7 * 86400  # lookback floor
@@ -316,6 +338,9 @@ def build_feature_store(
             preload_icao = _resolve_icao(iata, pg_conn)
             if preload_icao:
                 metar_cache[preload_icao] = _fetch_metar_for_airport(
+                    pg_conn, preload_icao, max_cut, min_epoch=min_cut
+                )
+                weather_cache[preload_icao] = _fetch_weather_for_airport(
                     pg_conn, preload_icao, max_cut, min_epoch=min_cut
                 )
 
@@ -388,9 +413,42 @@ def build_feature_store(
         metar_rows = metar_cache.get(icao, [])
         metar = select_cut_time_metar(metar_rows, cut_epoch)
 
-        temp = metar.get("temp") if metar else None
-        dewp = metar.get("dewp") if metar else None
-        relh = metar.get("relh") if metar else None
+        if metar:
+            temp = metar.get("temp")
+            dewp = metar.get("dewp")
+            relh = metar.get("relh")
+        else:
+            # Silent fallback to Open-Meteo reanalysis
+            weather_rows = weather_cache.get(icao, [])
+            # Build list compatible with select_cut_time_metar
+            weather_for_select = []
+            for w in weather_rows:
+                ts = w.get("timestamp")
+                if ts is None:
+                    continue
+                try:
+                    # timestamp is datetime from PostgreSQL
+                    if isinstance(ts, datetime):
+                        epoch = int(ts.timestamp())
+                    else:
+                        epoch = int(ts)
+                    weather_for_select.append({
+                        "obs_time": epoch,
+                        "temp": w.get("temp"),
+                        "relh": w.get("relh"),
+                        "dewp": w.get("dewp"),
+                    })
+                except Exception:
+                    continue
+            weather_sel = select_cut_time_metar(weather_for_select, cut_epoch)
+            if weather_sel:
+                temp = weather_sel.get("temp")
+                dewp = weather_sel.get("dewp")
+                relh = weather_sel.get("relh")
+            else:
+                temp = None
+                dewp = None
+                relh = None
 
         rows.append((
             airport_iata,

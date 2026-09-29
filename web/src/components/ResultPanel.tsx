@@ -83,7 +83,7 @@ function SuccessState({ result }: { result: PredictionResult }) {
   return (
     <div className="result-success">
       <div className="result-hero">
-        <div className={`severity severity-${severity}`}>
+        <div className={`severity severity-${severity}`} aria-label={`Severidad: ${SEVERITY_LABEL[severity]}`}>
           <span className="severity-dot" aria-hidden="true" />
           <span className="severity-label">{SEVERITY_LABEL[severity]}</span>
         </div>
@@ -126,7 +126,7 @@ function SuccessState({ result }: { result: PredictionResult }) {
       </div>
 
       {eta.disruption_likely && (
-        <div className="disruption-badge" role="status">
+        <div className="disruption-badge" role="status" aria-label="Alta probabilidad de disrupción">
           <AlertTriangle size={16} aria-hidden="true" />
           Alta probabilidad de disrupción
         </div>
