@@ -61,7 +61,7 @@ jobs:
   collectors:
     name: "1/5b Extract colectores → Bronze (weather + keyless)"
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
