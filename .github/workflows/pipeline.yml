@@ -2,11 +2,12 @@ name: Pipeline de extracción diaria
 
 # Flujo ETL claro en 5 etapas:
 # 1) Extract: OpenSky flights (CRITICAL) + Open-Meteo weather + colectores
-#    sin API key (METAR, festivos, EUROCONTROL PRU, OurAirports, NOTAM) → Bronze
-#    Delta. OpenSky corre en su propio job crítico; weather y el resto de
-#    colectores corren en un job paralelo con continue-on-error, de modo que su
-#    lentitud (p.ej. Open-Meteo archive) no agote el timeout del job crítico ni
-#    bloquee las etapas downstream (aislamiento de fallos).
+#    sin API key (METAR, festivos, EUROCONTROL PRU, NOTAM) → Bronze Delta.
+#    OpenSky corre en su propio job crítico; weather y el resto de colectores
+#    corren en un job paralelo con continue-on-error, de modo que su lentitud
+#    (p.ej. Open-Meteo archive) no agote el timeout del job crítico ni bloquee
+#    las etapas downstream (aislamiento de fallos). OurAirports se movió a un
+#    workflow semanal propio (ourairports-weekly.yml): es un snapshot cuasi-estático.
 # 2) Bronze → Silver: promote Bronze data a MongoDB
 # 3) Silver → Gold (flights): agrega vuelos en tablas analíticas
 # 4) Entity sync: copia entidades raw (flights, aircraft, weather) a Gold
@@ -99,11 +100,6 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
           EUROCONTROL_YEAR: ${{ github.event.inputs.eurocontrol_year || '' }}
-      - name: Collect OurAirports (airports + runways) → bronze/ourairports_*
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_ourairports.py
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       - name: Collect NOTAM (ENAIRE servAIS) → bronze/notam_enaire
         continue-on-error: true
         run: doppler run -- python scripts/collect_notam.py
