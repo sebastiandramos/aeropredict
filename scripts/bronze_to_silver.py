@@ -436,15 +436,10 @@ def _read_bronze_flights(
 
     dt = DeltaTable(table_uri, storage_options=get_storage_options())
 
-    # Filtrar por fecha si se especifica
+    # Filtrar por fecha si se especifica con predicate pushdown
     if target_date:
-        import pyarrow as pa
-        import pyarrow.compute as pc
-
-        table = dt.to_pyarrow_table()
-        date_scalar = pa.scalar(target_date, type=pa.date32())
-        mask = pc.equal(table.column("ingestion_date"), date_scalar)
-        table = table.filter(mask)
+        filters = [("ingestion_date", "=", target_date)]
+        table = dt.to_pyarrow_table(filters=filters)
         logger.info("Filtrado por ingestion_date=%s → %d filas", target_date, table.num_rows)
     else:
         table = dt.to_pyarrow_table()
