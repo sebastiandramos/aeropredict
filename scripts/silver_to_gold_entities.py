@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pymongo import MongoClient
@@ -42,6 +43,7 @@ from aeropredict.opensky.storage_gold import (
 )
 
 CHECKPOINT_COLLECTION = "silver_to_gold_entities"
+AENA_RETENTION_DAYS = 7
 
 logging.basicConfig(
     level=logging.INFO,
@@ -269,10 +271,9 @@ def _sync_entity_incremental(
 ) -> int:
     """Sync incremental de una entidad vía cursor ObjectId (_id).
 
-    Sin cursor guardado → sync completo (todas las docs de una vez) y se
-    persiste el cursor en el _id de la última doc. Con cursor → páginas
-    ascendentes de ``_id > cursor`` (el cursor se persiste tras cada
-    página escrita). Si una página falla, el cursor queda en la última
+    Sin cursor guardado → sync completo en páginas ascendentes desde el
+    principio. Con cursor → páginas de ``_id > cursor``. El cursor se
+    persiste tras cada página escrita. Si una página falla, queda en la última
     página committeada y la siguiente ejecución la reprocesa; el
     ``ON CONFLICT DO NOTHING`` de las write_fn hace el reproceso
     idempotente. Devuelve el total de filas escritas.
@@ -281,18 +282,15 @@ def _sync_entity_incremental(
     total = 0
 
     if cursor is None:
-        docs = list(mdb[collection].find({}, fields))
-        logger.info("  %s: %d documentos (sync completo)", collection, len(docs))
-        if docs:
-            total += write_fn(docs)
-            set_checkpoint_value(CHECKPOINT_COLLECTION, cursor_key, docs[-1]["_id"])
-        return total
+        logger.info("  %s: sync completo por páginas", collection)
+    else:
+        logger.info("  %s: sync incremental desde cursor %s", collection, cursor)
 
-    logger.info("  %s: sync incremental desde cursor %s", collection, cursor)
     while True:
+        query = {} if cursor is None else {"_id": {"$gt": cursor}}
         docs = list(
             mdb[collection]
-            .find({"_id": {"$gt": cursor}}, fields)
+            .find(query, fields)
             .sort("_id", 1)
             .limit(page_size)
         )
@@ -305,6 +303,18 @@ def _sync_entity_incremental(
         logger.info("  Gold %s: %d escritos (cursor %s)", cursor_key, n, cursor)
 
     return total
+
+
+def _prune_aena_history(mdb: Any, retention_days: int = AENA_RETENTION_DAYS) -> int:
+    """Conserva en Mongo solo snapshots AENA recientes, ya sincronizados a Gold."""
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(timespec="seconds")
+    result = mdb["aena_infovuelos"].delete_many({"snapshot_at_utc": {"$lt": cutoff}})
+    logger.info(
+        "  AENA Atlas: %d snapshots anteriores a %s retirados",
+        result.deleted_count,
+        cutoff,
+    )
+    return result.deleted_count
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -397,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         write_aena_infovuelos_gold,
         "aena_infovuelos_cursor",
     )
+    _prune_aena_history(mdb)
     _sync_entity(mdb, "metar", METAR_FIELDS, write_metar_gold, "metar")
     _sync_entity(mdb, "holidays", HOLIDAYS_FIELDS, write_holidays_gold, "holidays")
     _sync_entity(

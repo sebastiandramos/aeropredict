@@ -650,6 +650,25 @@ class TestAenaMainIntegration:
 class TestAenaSilverWrite:
     """MongoDB write path for AENA docs."""
 
+    def test_collection_ensures_only_used_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Do not recreate the unobserved airport/date index on Atlas."""
+        from aeropredict.opensky import storage_silver
+
+        mock_collection = MagicMock()
+        mock_db = MagicMock()
+        mock_db.__getitem__.return_value = mock_collection
+        mock_client = MagicMock()
+        mock_client.get_database.return_value = mock_db
+        monkeypatch.setattr(storage_silver, "_client", mock_client)
+        monkeypatch.setattr(storage_silver, "_aena_indexes_ensure", False)
+
+        assert storage_silver._get_aena_collection() is mock_collection
+        mock_collection.create_index.assert_called_once_with([
+            ("snapshot_at_utc", 1),
+            ("flight_number", 1),
+            ("aena_airport_iata", 1),
+        ])
+
     def test_write_empty_returns_zero(self) -> None:
         """Writing an empty doc list returns 0."""
         from aeropredict.opensky.storage_silver import write_aena_infovuelos

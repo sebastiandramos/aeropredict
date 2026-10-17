@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pytest
 
 from aeropredict.opensky.models import Flight
@@ -179,7 +180,20 @@ def _monkeypatch_deltatable(
                     break
 
         def to_pyarrow_table(self, filters: Any = None) -> pa.Table:
-            return self._table
+            if not filters:
+                return self._table
+
+            operations = {
+                "=": pc.equal,
+                ">=": pc.greater_equal,
+                "<": pc.less,
+                "<=": pc.less_equal,
+            }
+            mask = None
+            for column_name, operator, value in filters:
+                condition = operations[operator](self._table.column(column_name), value)
+                mask = condition if mask is None else pc.and_(mask, condition)
+            return self._table.filter(mask)
 
         def partitions(self) -> list[dict[str, str]]:
             # weather/AENA tables are not partitioned by ingestion_date
@@ -902,6 +916,12 @@ class TestArgumentParsing:
         """Without --date, target date is None."""
         args = _parse_args(["--delta-root", "/tmp/fake"])
         assert args.date is None
+        assert args.aena_window_days == 7
+
+    def test_aena_window_can_be_overridden(self) -> None:
+        """The recovery window remains configurable for targeted runs."""
+        args = _parse_args(["--aena-window-days", "14"])
+        assert args.aena_window_days == 14
 
     def test_specific_date_parsed(self) -> None:
         """--date YYYY-MM-DD is correctly parsed."""

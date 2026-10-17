@@ -380,8 +380,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="Solo muestra lo que procesaría")
     parser.add_argument(
-        "--aena-window-days", type=int, default=3,
-        help="Ventana en días para descubrir horas AENA pendientes (default: 3)",
+        "--aena-window-days", type=int, default=7,
+        help="Ventana en días para descubrir horas AENA pendientes (default: 7)",
     )
     return parser.parse_args(argv)
 

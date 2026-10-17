@@ -411,7 +411,7 @@ def write_weather(weather_list: list[dict[str, Any]]) -> int:
 
 
 def _get_aena_collection() -> Collection[Any]:
-    """Devuelve colección ``aena_infovuelos`` con índices."""
+    """Devuelve colección ``aena_infovuelos`` con su índice de consulta."""
     global _aena_indexes_ensure
     _connect()
     assert _client is not None
@@ -422,10 +422,6 @@ def _get_aena_collection() -> Collection[Any]:
             ("snapshot_at_utc", pymongo.ASCENDING),
             ("flight_number", pymongo.ASCENDING),
             ("aena_airport_iata", pymongo.ASCENDING),
-        ])
-        col.create_index([
-            ("aena_airport_iata", pymongo.ASCENDING),
-            ("snapshot_at_utc", pymongo.ASCENDING),
         ])
         _aena_indexes_ensure = True
     return db["aena_infovuelos"]
