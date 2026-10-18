@@ -290,11 +290,12 @@ CREATE TABLE IF NOT EXISTS gold.notam (
     snapshot_at   TIMESTAMPTZ,
     feature_json  JSONB NOT NULL,
     feature_hash  TEXT GENERATED ALWAYS AS (md5(feature_json::text)) STORED,
-    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- UNIQUE inline a propósito: en una tabla legacy el CREATE TABLE IF NOT EXISTS
+    -- se omite y feature_hash aún no existe, así que un CREATE UNIQUE INDEX suelto
+    -- fallaría; la reconciliación por proceso se encarga de migrar esa tabla.
+    UNIQUE (layer, feature_hash)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS notam_layer_feature_hash_key
-    ON gold.notam (layer, feature_hash);
 
 CREATE INDEX IF NOT EXISTS idx_notam_snapshot_layer ON gold.notam (snapshot_at, layer);
 
