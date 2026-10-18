@@ -1,0 +1,40 @@
+name: OurAirports semanal
+
+# OurAirports publica dos CSVs globales (airports.csv + runways.csv) que cambian
+# muy poco (snapshot cuasi-estático). Descargarlos y re-upsertar ~128k filas dos
+# veces al día es un desperdicio y alargaba el job "collectors" del pipeline
+# diario. Este workflow los recolecta UNA vez por semana; el siguiente run diario
+# de Bronze → Silver los promueve a MongoDB automáticamente (per-source
+# checkpoints), con a lo sumo 1 día de desfase.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'   # lunes 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ourairports-weekly
+  cancel-in-progress: false
+
+env:
+  OPENSKY_DELTA_ROOT: s3://aeropredict-landing-zone
+
+jobs:
+  ourairports:
+    name: "OurAirports → Bronze"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - uses: dopplerhq/cli-action@v3
+      - name: Collect OurAirports (airports + runways) → bronze/ourairports_*
+        continue-on-error: true
+        run: doppler run -- python scripts/collect_ourairports.py
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

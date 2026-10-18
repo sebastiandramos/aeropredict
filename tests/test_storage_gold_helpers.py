@@ -8,7 +8,7 @@ y ``write_runways_gold``, más el soporte ``fields=None`` de
 
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,6 +24,7 @@ class FakeCursor:
 
     def __init__(self, conn):
         self.conn = conn
+        self._last_sql = ""
 
     def __enter__(self):
         return self
@@ -32,9 +33,12 @@ class FakeCursor:
         return False
 
     def execute(self, sql):
+        self._last_sql = sql
         self.conn.executed.append(sql)
 
     def fetchall(self):
+        if "pg_index" in self._last_sql:
+            return [list(row) for row in self.conn.notam_unique_indexes]
         return [[col] for col in self.conn.metar_columns]
 
 
@@ -47,6 +51,14 @@ class FakeConn:
         self.commits = 0
         self.metar_columns: list[str] = [
             name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
+        ]
+        # Por defecto gold.notam ya tiene el unique key nuevo → reconcile no-op.
+        self.notam_unique_indexes: list[tuple[str, str]] = [
+            (
+                storage_gold.NOTAM_TARGET_INDEX,
+                f"CREATE UNIQUE INDEX {storage_gold.NOTAM_TARGET_INDEX} "
+                "ON gold.notam USING btree (layer, feature_hash)",
+            )
         ]
 
     def cursor(self):
@@ -407,7 +419,7 @@ def test_write_notam_gold_inserts_rows(monkeypatch):
     assert conn.commits == 1
     sql, rows, template, page_size = conn.calls[0]
     assert "INSERT INTO gold.notam" in sql
-    assert "ON CONFLICT (layer, feature_json) DO NOTHING" in sql
+    assert "ON CONFLICT (layer, feature_hash) DO NOTHING" in sql
     assert "%s::jsonb" in template
     assert "%s::timestamptz" in template
     assert page_size == 500
@@ -580,7 +592,29 @@ class FakeFindCollection:
 
     def find(self, filter_, fields=None):
         self.find_calls.append((filter_, fields))
-        return self.docs
+        docs = self.docs
+        lower_bound = filter_.get("_id", {}).get("$gt")
+        if lower_bound is not None:
+            docs = [doc for doc in docs if doc["_id"] > lower_bound]
+        return FakeFindCursor(docs)
+
+
+class FakeFindCursor:
+    """Cursor fake compatible con sort/limit de PyMongo."""
+
+    def __init__(self, docs):
+        self.docs = list(docs)
+
+    def sort(self, field, direction):
+        self.docs.sort(key=lambda doc: doc[field], reverse=direction < 0)
+        return self
+
+    def limit(self, count):
+        self.docs = self.docs[:count]
+        return self
+
+    def __iter__(self):
+        return iter(self.docs)
 
 
 class FakeWrite:
@@ -629,3 +663,50 @@ def test_sync_entity_empty_collection_returns_zero(monkeypatch):
 
     assert n == 0
     assert write_fn.calls == []
+
+
+def test_sync_entity_incremental_full_sync_is_paged_and_checkpointed(monkeypatch):
+    docs = [{"_id": value, "field": str(value)} for value in range(5)]
+    collection = FakeFindCollection(docs)
+    mdb = {"aena_infovuelos": collection}
+    write_fn = FakeWrite()
+    checkpoints = []
+    monkeypatch.setattr(entities, "get_checkpoint_value", lambda *args: None)
+    monkeypatch.setattr(
+        entities,
+        "set_checkpoint_value",
+        lambda _collection, _key, value: checkpoints.append(value),
+    )
+
+    total = entities._sync_entity_incremental(
+        mdb, "aena_infovuelos", {"_id": 1, "field": 1}, write_fn,
+        "aena_cursor", page_size=2,
+    )
+
+    assert total == 5
+    assert [[doc["_id"] for doc in page] for page in write_fn.calls] == [[0, 1], [2, 3], [4]]
+    assert checkpoints == [1, 3, 4]
+    assert collection.find_calls == [
+        ({}, {"_id": 1, "field": 1}),
+        ({"_id": {"$gt": 1}}, {"_id": 1, "field": 1}),
+        ({"_id": {"$gt": 3}}, {"_id": 1, "field": 1}),
+        ({"_id": {"$gt": 4}}, {"_id": 1, "field": 1}),
+    ]
+
+
+def test_prune_aena_history_uses_seven_day_cutoff():
+    class FakeDeleteResult:
+        deleted_count = 3
+
+    class FakeDeleteCollection:
+        def delete_many(self, query):
+            self.query = query
+            return FakeDeleteResult()
+
+    collection = FakeDeleteCollection()
+    deleted = entities._prune_aena_history({"aena_infovuelos": collection})
+
+    cutoff = datetime.fromisoformat(collection.query["snapshot_at_utc"]["$lt"])
+    now = datetime.now(UTC)
+    assert deleted == 3
+    assert now - timedelta(days=7, seconds=5) < cutoff < now - timedelta(days=7, seconds=-5)

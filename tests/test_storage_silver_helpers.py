@@ -36,6 +36,7 @@ class FakeCollection:
         self.replace_calls = []
         self.insert_many_calls = []
         self.create_index_calls = []
+        self.bulk_write_calls = []
         self._insert_many_error = insert_many_error
 
     def create_index(self, *args, **kwargs):
@@ -56,6 +57,32 @@ class FakeCollection:
         if self._insert_many_error is not None:
             raise self._insert_many_error
         return FakeInsertManyResult([None] * len(docs))
+
+    def bulk_write(self, ops, ordered=False):
+        self.bulk_write_calls.append((list(ops), ordered))
+        upserted_count = 0
+        modified_count = 0
+        for op in ops:
+            filter_doc = getattr(op, "_filter", {})
+            replacement = getattr(op, "_doc", {})
+            _id = filter_doc.get("_id")
+            rep_copy = dict(replacement) if isinstance(replacement, dict) else replacement
+            if _id in self.docs:
+                changed = self.docs[_id] != rep_copy
+                self.docs[_id] = rep_copy
+                if changed:
+                    modified_count += 1
+            else:
+                self.docs[_id] = rep_copy
+                upserted_count += 1
+
+        class FakeBulkWriteResult:
+            def __init__(self, upserted_count, modified_count):
+                self.upserted_count = upserted_count
+                self.modified_count = modified_count
+                self.upserted_ids = {}
+
+        return FakeBulkWriteResult(upserted_count, modified_count)
 
 
 class FakeAdmin:
@@ -122,7 +149,12 @@ def test_write_airports_upserts_by_ident(monkeypatch):
     n = storage_silver.write_airports([_airport_doc("LEMD"), _airport_doc("LEAL")])
 
     assert n == 2
-    assert [call[0] for call in fake.replace_calls] == [{"_id": "LEMD"}, {"_id": "LEAL"}]
+    assert len(fake.bulk_write_calls) == 1
+    ops, ordered = fake.bulk_write_calls[0]
+    assert ordered is False
+    assert len(ops) == 2
+    assert [op._filter for op in ops] == [{"_id": "LEMD"}, {"_id": "LEAL"}]
+    assert all(op._upsert is True for op in ops)
     assert set(fake.docs) == {"LEMD", "LEAL"}
     assert fake.docs["LEMD"]["_id"] == "LEMD"
 
@@ -137,7 +169,8 @@ def test_write_airports_duplicate_ident_does_not_duplicate(monkeypatch):
 
     assert first == 2
     assert second == 0  # docs idénticos: upsert no actualiza nada
-    assert len(fake.replace_calls) == 4  # una llamada replace_one por doc e invocación
+    assert len(fake.bulk_write_calls) == 2
+    assert all(ordered is False for _, ordered in fake.bulk_write_calls)
     assert set(fake.docs) == {"LEMD", "LEAL"}  # mismo _id no duplica
 
 
@@ -149,10 +182,14 @@ def test_write_runways_composite_id(monkeypatch):
     n = storage_silver.write_runways(runways)
 
     assert n == 2
-    assert [call[0] for call in fake.replace_calls] == [
+    assert len(fake.bulk_write_calls) == 1
+    ops, ordered = fake.bulk_write_calls[0]
+    assert ordered is False
+    assert [op._filter for op in ops] == [
         {"_id": "LEMD:14R:32L"},
         {"_id": "LEMD:18L:36R"},
     ]
+    assert all(op._upsert is True for op in ops)
     assert runways[0]["_id"] == "LEMD:14R:32L"
     assert runways[1]["_id"] == "LEMD:18L:36R"
     assert set(fake.docs) == {"LEMD:14R:32L", "LEMD:18L:36R"}
@@ -166,7 +203,7 @@ def test_write_runways_duplicate_id_is_idempotent(monkeypatch):
     assert storage_silver.write_runways(runways) == 1
     assert storage_silver.write_runways(runways) == 0
     assert set(fake.docs) == {"LEAL:10:28"}
-    assert len(fake.replace_calls) == 2
+    assert len(fake.bulk_write_calls) == 2
 
 
 def test_write_airports_missing_optional_fields_still_written(monkeypatch):

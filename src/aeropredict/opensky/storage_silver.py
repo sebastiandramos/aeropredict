@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pymongo
+from pymongo import ReplaceOne
 from pymongo.collection import Collection
 from pymongo.errors import BulkWriteError
 
@@ -28,6 +29,8 @@ from .config import get_mongo_uri
 from .models import Flight, StateVector, Track
 
 logger = logging.getLogger(__name__)
+
+_BULK_CHUNK = 1000
 
 # Conexión perezosa (se conecta en el primer uso)
 _client: pymongo.MongoClient[Any] | None = None
@@ -408,7 +411,7 @@ def write_weather(weather_list: list[dict[str, Any]]) -> int:
 
 
 def _get_aena_collection() -> Collection[Any]:
-    """Devuelve colección ``aena_infovuelos`` con índices."""
+    """Devuelve colección ``aena_infovuelos`` con su índice de consulta."""
     global _aena_indexes_ensure
     _connect()
     assert _client is not None
@@ -419,10 +422,6 @@ def _get_aena_collection() -> Collection[Any]:
             ("snapshot_at_utc", pymongo.ASCENDING),
             ("flight_number", pymongo.ASCENDING),
             ("aena_airport_iata", pymongo.ASCENDING),
-        ])
-        col.create_index([
-            ("aena_airport_iata", pymongo.ASCENDING),
-            ("snapshot_at_utc", pymongo.ASCENDING),
         ])
         _aena_indexes_ensure = True
     return db["aena_infovuelos"]
@@ -500,11 +499,17 @@ def write_airports(airports: list[dict[str, Any]], mongo_uri: str | None = None)
         return 0
     col = _get_airport_collection(mongo_uri)
     n = 0
+    ops: list[ReplaceOne] = []
     for doc in airports:
         doc["_id"] = doc["ident"]
-        result = col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
-        if result.upserted_id is not None or result.modified_count > 0:
-            n += 1
+        ops.append(ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+        if len(ops) >= _BULK_CHUNK:
+            result = col.bulk_write(ops, ordered=False)
+            n += result.upserted_count + result.modified_count
+            ops = []
+    if ops:
+        result = col.bulk_write(ops, ordered=False)
+        n += result.upserted_count + result.modified_count
     logger.info("Silver (MongoDB): %d airports upsertados", n)
     return n
 
@@ -538,11 +543,17 @@ def write_runways(runways: list[dict[str, Any]], mongo_uri: str | None = None) -
         return 0
     col = _get_runway_collection(mongo_uri)
     n = 0
+    ops: list[ReplaceOne] = []
     for doc in runways:
         doc["_id"] = f"{doc['airport_ident']}:{doc['le_ident']}:{doc['he_ident']}"
-        result = col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
-        if result.upserted_id is not None or result.modified_count > 0:
-            n += 1
+        ops.append(ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+        if len(ops) >= _BULK_CHUNK:
+            result = col.bulk_write(ops, ordered=False)
+            n += result.upserted_count + result.modified_count
+            ops = []
+    if ops:
+        result = col.bulk_write(ops, ordered=False)
+        n += result.upserted_count + result.modified_count
     logger.info("Silver (MongoDB): %d runways upsertados", n)
     return n
 

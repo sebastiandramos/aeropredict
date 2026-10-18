@@ -2,8 +2,12 @@ name: Pipeline de extracción diaria
 
 # Flujo ETL claro en 5 etapas:
 # 1) Extract: OpenSky flights (CRITICAL) + Open-Meteo weather + colectores
-#    sin API key (METAR, festivos, EUROCONTROL PRU, OurAirports, NOTAM) → Bronze
-#    Delta. OpenSky es crítico; el resto usa continue-on-error (aislamiento de fallos).
+#    sin API key (METAR, festivos, EUROCONTROL PRU, NOTAM) → Bronze Delta.
+#    OpenSky corre en su propio job crítico; weather y el resto de colectores
+#    corren en un job paralelo con continue-on-error, de modo que su lentitud
+#    (p.ej. Open-Meteo archive) no agote el timeout del job crítico ni bloquee
+#    las etapas downstream (aislamiento de fallos). OurAirports se movió a un
+#    workflow semanal propio (ourairports-weekly.yml): es un snapshot cuasi-estático.
 # 2) Bronze → Silver: promote Bronze data a MongoDB
 # 3) Silver → Gold (flights): agrega vuelos en tablas analíticas
 # 4) Entity sync: copia entidades raw (flights, aircraft, weather) a Gold
@@ -33,9 +37,9 @@ env:
 
 jobs:
   extract:
-    name: "1/5 Extract → Bronze"
+    name: "1/5a Extract OpenSky → Bronze (crítico)"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,6 +53,26 @@ jobs:
         run: doppler run -- python scripts/extract_opensky_to_bronze.py --days 2
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
+  # Job paralelo, no crítico. Weather (Open-Meteo) y los colectores sin API key
+  # son lentos (Open-Meteo archive puede tardar 20-30+ min con timeouts) y ya
+  # toleraban fallos vía continue-on-error. Separarlos del job crítico evita que
+  # agoten su timeout. Un fallo/timeout aquí no bloquea downstream:
+  # continue-on-error: true hace que needs.collectors.result == 'success'.
+  collectors:
+    name: "1/5b Extract colectores → Bronze (weather + keyless)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -e .
+      - uses: dopplerhq/cli-action@v3
       - name: Extraer Open-Meteo → Bronze Delta (R2)
         continue-on-error: true
         run: doppler run -- python scripts/collect_weather.py --days 2
@@ -76,11 +100,6 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
           EUROCONTROL_YEAR: ${{ github.event.inputs.eurocontrol_year || '' }}
-      - name: Collect OurAirports (airports + runways) → bronze/ourairports_*
-        continue-on-error: true
-        run: doppler run -- python scripts/collect_ourairports.py
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       - name: Collect NOTAM (ENAIRE servAIS) → bronze/notam_enaire
         continue-on-error: true
         run: doppler run -- python scripts/collect_notam.py
@@ -89,9 +108,9 @@ jobs:
 
   bronze_to_silver:
     name: "2/5 Bronze → Silver"
-    needs: extract
+    needs: [extract, collectors]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
