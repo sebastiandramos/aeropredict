@@ -73,6 +73,11 @@ from .migrate_aena_gold_unique import (
     get_aena_unique_constraints,
     migrate_aena_gold_unique,
 )
+from .migrate_notam_gold_unique import (
+    NOTAM_TARGET_INDEX,
+    get_notam_unique_index_names,
+    migrate_notam_gold_unique,
+)
 from .models import Flight
 
 logger = logging.getLogger(__name__)
@@ -284,9 +289,12 @@ CREATE TABLE IF NOT EXISTS gold.notam (
     layer         INTEGER NOT NULL,
     snapshot_at   TIMESTAMPTZ,
     feature_json  JSONB NOT NULL,
-    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (layer, feature_json)
+    feature_hash  TEXT GENERATED ALWAYS AS (md5(feature_json::text)) STORED,
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS notam_layer_feature_hash_key
+    ON gold.notam (layer, feature_hash);
 
 CREATE INDEX IF NOT EXISTS idx_notam_snapshot_layer ON gold.notam (snapshot_at, layer);
 
@@ -327,13 +335,14 @@ CREATE INDEX IF NOT EXISTS idx_runways_surface ON gold.runways (surface);
 
 def _get_conn():
     """Conecta a PostgreSQL y crea tablas si no existen."""
-    global _conn, _aena_unique_reconciled
+    global _conn, _aena_unique_reconciled, _notam_unique_reconciled
     if _conn is None or _conn.closed:
         uri = get_postgres_uri()
         logger.debug("Conectando a PostgreSQL: %s", uri)
         _conn = psycopg2.connect(uri)
         _conn.autocommit = True
         _aena_unique_reconciled = False
+        _notam_unique_reconciled = False
         with _conn.cursor() as cur:
             cur.execute(SCHEMA_SQL)
     return _conn
@@ -341,11 +350,12 @@ def _get_conn():
 
 def close() -> None:
     """Cierra la conexión a PostgreSQL."""
-    global _conn, _aena_unique_reconciled
+    global _conn, _aena_unique_reconciled, _notam_unique_reconciled
     if _conn is not None and not _conn.closed:
         _conn.close()
     _conn = None
     _aena_unique_reconciled = False
+    _notam_unique_reconciled = False
 
 
 # Cache de reconciliación del unique key de gold.aena_infovuelos (por proceso).
@@ -385,6 +395,49 @@ def _reconcile_aena_gold_unique(conn: Any) -> None:
         raise RuntimeError(
             "No se pudo reconciliar el unique key de gold.aena_infovuelos "
             f"({exc}). Ejecuta manualmente: {AENA_MIGRATION_FALLBACK}"
+        ) from exc
+
+
+# Cache de reconciliación del unique key de gold.notam (por proceso).
+# Se inspecciona pg_index una sola vez por proceso; si el índice de
+# (layer, feature_hash) no existe (BD antigua con UNIQUE (layer, feature_json)),
+# se migra automáticamente antes del primer write NOTAM.
+_notam_unique_reconciled = False
+
+NOTAM_MIGRATION_FALLBACK = "python scripts/migrate_notam_gold_unique.py --apply"
+
+
+def _reconcile_notam_gold_unique(conn: Any) -> None:
+    """Asegura que gold.notam tenga el unique key ``(layer, feature_hash)``.
+
+    La constraint original ``UNIQUE (layer, feature_json)`` indexa una columna
+    JSONB, limitada a 2704 B por entrada de índice btree; un feature GeoJSON
+    grande rompe el INSERT (``ProgramLimitExceeded``). Se indexa el md5 del JSON.
+
+    Consulta los índices UNIQUE reales usando la MISMA conexión del writer. Si el
+    índice ``(layer, feature_hash)`` ya existe → no-op. Si no, aplica la migración
+    automáticamente UNA VEZ por proceso (cache en ``_notam_unique_reconciled``).
+    Si la migración no se puede ejecutar, lanza un error claro con el fallback
+    manual — nunca deja las entidades downstream sin sincronizar silenciosamente.
+    """
+    global _notam_unique_reconciled
+    if _notam_unique_reconciled:
+        return
+    try:
+        names = get_notam_unique_index_names(conn)
+        if NOTAM_TARGET_INDEX in names:
+            logger.debug("gold.notam ya tiene el unique key (layer, feature_hash)")
+        else:
+            logger.info(
+                "Reconciliando unique key de gold.notam (unique indexes actuales: %s)...",
+                names,
+            )
+            migrate_notam_gold_unique(conn)
+        _notam_unique_reconciled = True
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo reconciliar el unique key de gold.notam "
+            f"({exc}). Ejecuta manualmente: {NOTAM_MIGRATION_FALLBACK}"
         ) from exc
 
 
@@ -1194,13 +1247,14 @@ def write_notam_gold(features: list[dict[str, Any]]) -> int:
         logger.warning("Skipped %d NOTAM rows missing feature or layer", n_skipped)
 
     conn = _get_conn()
+    _reconcile_notam_gold_unique(conn)
     with conn.cursor() as cur:
         execute_values(
             cur,
             """INSERT INTO gold.notam
             (layer, snapshot_at, feature_json)
             VALUES %s
-            ON CONFLICT (layer, feature_json) DO NOTHING
+            ON CONFLICT (layer, feature_hash) DO NOTHING
             """,
             rows,
             template="(%s, %s::timestamptz, %s::jsonb)",

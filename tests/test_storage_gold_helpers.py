@@ -24,6 +24,7 @@ class FakeCursor:
 
     def __init__(self, conn):
         self.conn = conn
+        self._last_sql = ""
 
     def __enter__(self):
         return self
@@ -32,9 +33,12 @@ class FakeCursor:
         return False
 
     def execute(self, sql):
+        self._last_sql = sql
         self.conn.executed.append(sql)
 
     def fetchall(self):
+        if "pg_index" in self._last_sql:
+            return [list(row) for row in self.conn.notam_unique_indexes]
         return [[col] for col in self.conn.metar_columns]
 
 
@@ -47,6 +51,14 @@ class FakeConn:
         self.commits = 0
         self.metar_columns: list[str] = [
             name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
+        ]
+        # Por defecto gold.notam ya tiene el unique key nuevo → reconcile no-op.
+        self.notam_unique_indexes: list[tuple[str, str]] = [
+            (
+                storage_gold.NOTAM_TARGET_INDEX,
+                f"CREATE UNIQUE INDEX {storage_gold.NOTAM_TARGET_INDEX} "
+                "ON gold.notam USING btree (layer, feature_hash)",
+            )
         ]
 
     def cursor(self):
@@ -407,7 +419,7 @@ def test_write_notam_gold_inserts_rows(monkeypatch):
     assert conn.commits == 1
     sql, rows, template, page_size = conn.calls[0]
     assert "INSERT INTO gold.notam" in sql
-    assert "ON CONFLICT (layer, feature_json) DO NOTHING" in sql
+    assert "ON CONFLICT (layer, feature_hash) DO NOTHING" in sql
     assert "%s::jsonb" in template
     assert "%s::timestamptz" in template
     assert page_size == 500
