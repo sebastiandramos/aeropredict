@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS gold.weather (
     timestamp           TIMESTAMPTZ NOT NULL,
     flight_date         DATE NOT NULL,
     temperature_2m      FLOAT,
+    dew_point_2m        FLOAT,
     precipitation       FLOAT,
     wind_speed_10m      FLOAT,
     wind_gusts_10m      FLOAT,
@@ -558,6 +559,68 @@ def _reconcile_metar_schema(conn: Any, dry_run: bool = False) -> list[str] | Non
     return missing
 
 
+WEATHER_COLUMNS_SQL = """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'gold' AND table_name = 'weather'
+"""
+
+
+# Columnas del esquema canónico de gold.weather: (nombre, tipo DDL).
+WEATHER_CANONICAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("airport_code", "VARCHAR(4) NOT NULL"),
+    ("timestamp", "TIMESTAMPTZ NOT NULL"),
+    ("flight_date", "DATE NOT NULL"),
+    ("temperature_2m", "FLOAT"),
+    ("dew_point_2m", "FLOAT"),
+    ("precipitation", "FLOAT"),
+    ("wind_speed_10m", "FLOAT"),
+    ("wind_gusts_10m", "FLOAT"),
+    ("visibility", "FLOAT"),
+    ("cloud_cover", "FLOAT"),
+    ("relative_humidity_2m", "FLOAT"),
+    ("ingested_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+)
+
+
+def _reconcile_weather_schema(conn: Any, dry_run: bool = False) -> list[str] | None:
+    """Añade a gold.weather las columnas del esquema canónico que falten.
+
+    Mismo bug de producción que metar/feature_store: Neon conservaba una
+    gold.weather creada antes de añadir ``dew_point_2m`` y ``CREATE TABLE IF NOT
+    EXISTS`` la saltaba en silencio (rompía ``build_feature_store`` al seleccionar
+    la columna). NO se dropea la tabla: solo se añaden las columnas ausentes vía
+    ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` (preserva datos e idempotente).
+
+    Args:
+        conn: Conexión PostgreSQL (autocommit activo).
+        dry_run: Si True, no ejecuta los ALTER; solo informa.
+
+    Returns:
+        Lista de columnas añadidas,
+        [] si no-op (todas las columnas canónicas presentes),
+        None si dry_run y habría cambios.
+    """
+    with conn.cursor() as cur:
+        cur.execute(WEATHER_COLUMNS_SQL)
+        existing = {row[0] for row in cur.fetchall()}
+    missing = [name for name, _ in WEATHER_CANONICAL_COLUMNS if name not in existing]
+    if not missing:
+        return []
+    if dry_run:
+        logger.warning(
+            "gold.weather is missing column(s) %s; a real run would ALTER the table",
+            ", ".join(missing),
+        )
+        return None
+    with conn.cursor() as cur:
+        for name, ddl in WEATHER_CANONICAL_COLUMNS:
+            if name in missing:
+                cur.execute(f"ALTER TABLE gold.weather ADD COLUMN IF NOT EXISTS {name} {ddl}")
+    logger.info("gold.weather reconciled: added column(s) %s", ", ".join(missing))
+    return missing
+
+
 # ===================================================================
 # Gold — actualizaciones desde lista de vuelos
 # ===================================================================
@@ -892,6 +955,7 @@ def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
             doc.get("timestamp"),
             doc.get("flight_date"),
             doc.get("temperature_2m"),
+            doc.get("dew_point_2m"),
             doc.get("precipitation"),
             doc.get("wind_speed_10m"),
             doc.get("wind_gusts_10m"),
@@ -901,18 +965,20 @@ def write_weather_gold(weather_list: list[dict[str, Any]]) -> int:
         ))
 
     conn = _get_conn()
+    _reconcile_weather_schema(conn)
     with conn.cursor() as cur:
         execute_values(
             cur,
             """INSERT INTO gold.weather
             (airport_code, timestamp, flight_date,
-             temperature_2m, precipitation, wind_speed_10m,
+             temperature_2m, dew_point_2m, precipitation, wind_speed_10m,
              wind_gusts_10m, visibility, cloud_cover, relative_humidity_2m)
             VALUES %s
-            ON CONFLICT (airport_code, timestamp) DO NOTHING
+            ON CONFLICT (airport_code, timestamp) DO UPDATE SET
+                dew_point_2m = EXCLUDED.dew_point_2m
             """,
             rows,
-            template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s)",
+            template="(%s, %s::timestamptz, %s::date, %s, %s, %s, %s, %s, %s, %s, %s)",
             page_size=500,
         )
     conn.commit()

@@ -788,3 +788,40 @@ class TestFeatureStoreSchemaMigration:
         n = bfs.build_feature_store()
         assert n == 0
         assert captured_rows == []
+
+
+# ------------------------------------------------------------------
+# _magnus_dew_point (dew point for the Open-Meteo fallback path)
+# ------------------------------------------------------------------
+
+
+class TestMagnusDewPoint:
+    """Unit tests for the Magnus approximation used when gold.weather lacks dew_point_2m."""
+
+    def test_known_value_matches_reference(self) -> None:
+        """Given: 20 C / 50% RH. Then: ~9.3 C (reference Magnus result)."""
+        assert bfs._magnus_dew_point(20.0, 50.0) == pytest.approx(9.3, abs=0.2)
+
+    def test_saturated_air_equals_temperature(self) -> None:
+        """Given: RH 100%. Then: dew point equals temperature."""
+        assert bfs._magnus_dew_point(15.0, 100.0) == pytest.approx(15.0, abs=0.05)
+
+    def test_dry_air_dew_point_far_below_temperature(self) -> None:
+        """Given: 30 C / 19% RH. Then: dew point well below temperature."""
+        dewp = bfs._magnus_dew_point(30.0, 19.0)
+        assert dewp is not None
+        assert dewp < 10.0
+
+    def test_returns_none_when_temp_missing(self) -> None:
+        """Given: no temperature. Then: None (cannot derive)."""
+        assert bfs._magnus_dew_point(None, 50.0) is None
+
+    def test_returns_none_when_relh_missing(self) -> None:
+        """Given: no relative humidity. Then: None (cannot derive)."""
+        assert bfs._magnus_dew_point(20.0, None) is None
+
+    def test_returns_none_for_out_of_range_relh(self) -> None:
+        """Given: RH 0 / negative / >100. Then: None (guards the log domain)."""
+        assert bfs._magnus_dew_point(20.0, 0.0) is None
+        assert bfs._magnus_dew_point(20.0, -5.0) is None
+        assert bfs._magnus_dew_point(20.0, 150.0) is None

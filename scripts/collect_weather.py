@@ -105,6 +105,7 @@ def collect_weather(
     days_back: int | None = None,
     dry_run: bool = False,
     delta_root: str = "data/raw",
+    force: bool = False,
 ) -> dict[str, int]:
     """Recolecta datos meteorológicos para aeropuertos.
 
@@ -114,6 +115,8 @@ def collect_weather(
         days_back: Limitar la extracción a los últimos N días desde la fecha final.
         dry_run: Solo mostrar lo que haría.
         delta_root: Ruta base Delta.
+        force: Si True, re-colecta fechas que ya tienen datos (para backfill de
+            nuevas variables, p.ej. ``dew_point_2m``).
 
     Returns:
         Stats de la colección.
@@ -151,8 +154,8 @@ def collect_weather(
             total += 1
             continue
 
-        # Saltar si ya tenemos datos
-        if _has_weather(icao, start):
+        # Saltar si ya tenemos datos (salvo --force, para backfill de variables)
+        if not force and _has_weather(icao, start):
             logger.info("  %s %s: ya existe (skip)", icao, start)
             skipped += 1
             total += 1
@@ -203,6 +206,8 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=None,
                         help="Limitar la extracción a los últimos N días desde la fecha final")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-colecta fechas ya presentes (backfill de nuevas variables)")
     args = parser.parse_args()
 
     stats = collect_weather(
@@ -211,6 +216,7 @@ def main() -> None:
         days_back=args.days,
         dry_run=args.dry_run,
         delta_root=get_delta_root(),
+        force=args.force,
     )
 
     logger.info("--- Resultados ---")
