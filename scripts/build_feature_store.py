@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -222,6 +223,21 @@ def _fetch_metar_for_airport(
     return rows
 
 
+def _magnus_dew_point(temp: float | None, relh: float | None) -> float | None:
+    """Dew point (°C) from temperature + relative humidity via Magnus formula.
+
+    Used to backfill ``dewp`` when the weather/METAR source does not provide it.
+    Returns None if inputs are missing or out of the formula's valid range.
+    """
+    if temp is None or relh is None:
+        return None
+    if not (0.0 < relh <= 100.0):
+        return None
+    a, b = 17.27, 237.7
+    alpha = (a * temp) / (b + temp) + math.log(relh / 100.0)
+    return (b * alpha) / (a - alpha)
+
+
 def _fetch_weather_for_airport(
     pg_conn: Any, icao_id: str, max_epoch: float, min_epoch: float | None = None,
 ) -> list[dict[str, Any]]:
@@ -229,6 +245,8 @@ def _fetch_weather_for_airport(
 
     Returns rows sorted by timestamp ascending.
     Used as silent fallback when METAR is unavailable.
+    ``dewp`` comes from the Open-Meteo ``dew_point_2m`` column; when absent it is
+    derived from ``temperature_2m`` + ``relative_humidity_2m`` (Magnus formula).
     """
     if min_epoch is None:
         min_epoch = int(max_epoch) - 7 * 86400
@@ -244,6 +262,9 @@ def _fetch_weather_for_airport(
     cols = [desc[0] for desc in cur.description]
     rows = [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
     cur.close()
+    for row in rows:
+        if row.get("dewp") is None:
+            row["dewp"] = _magnus_dew_point(row.get("temp"), row.get("relh"))
     return rows
 
 

@@ -104,6 +104,7 @@ def _build_weather_docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "timestamp": timestamp,
             "flight_date": timestamp[:10],
             "temperature_2m": _safe(hourly.get("temperature_2m", []), i),
+            "dew_point_2m": _safe(hourly.get("dew_point_2m", []), i),
             "precipitation": _safe(hourly.get("precipitation", []), i),
             "wind_speed_10m": _safe(hourly.get("wind_speed_10m", []), i),
             "wind_gusts_10m": _safe(hourly.get("wind_gusts_10m", []), i),

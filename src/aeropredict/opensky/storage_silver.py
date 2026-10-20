@@ -394,13 +394,30 @@ def write_weather(weather_list: list[dict[str, Any]]) -> int:
         return 0
     col = _get_weather_collection()
     now = datetime.now(UTC)
+    # Clave natural (airport_code, timestamp) == UNIQUE de gold.weather. Dedupe
+    # dentro del lote y upserta para que la re-promoción sea idempotente y no
+    # acumule duplicados en Mongo (que luego Gold dedupea con ON CONFLICT).
+    by_key: dict[tuple[Any, Any], dict[str, Any]] = {}
     for doc in weather_list:
         doc.setdefault("ingested_at", now)
-    try:
-        result = col.insert_many(weather_list, ordered=False)
-        n = len(result.inserted_ids)
-    except BulkWriteError as e:
-        n = len(e.details.get("insertedIds", [])) if e.details else 0
+        by_key[(doc.get("airport_code"), doc.get("timestamp"))] = doc
+    ops = [
+        ReplaceOne(
+            {"airport_code": doc.get("airport_code"), "timestamp": doc.get("timestamp")},
+            doc,
+            upsert=True,
+        )
+        for doc in by_key.values()
+    ]
+    n = 0
+    # Chunk the bulk so a full-history backfill does not exceed Atlas maxTimeMS.
+    for start in range(0, len(ops), _BULK_CHUNK):
+        chunk = ops[start : start + _BULK_CHUNK]
+        try:
+            result = col.bulk_write(chunk, ordered=False)
+            n += result.upserted_count + result.modified_count
+        except BulkWriteError as e:
+            n += len(e.details.get("upserted", [])) if e.details else 0
     logger.info("Silver (MongoDB): %d weather docs insertados", n)
     return n
 

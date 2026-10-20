@@ -352,6 +352,7 @@ class WeatherDocument(BaseModel):
     timestamp: datetime | None = None
     flight_date: datetime | None = None
     temperature_2m: float | None = None
+    dew_point_2m: float | None = None
     precipitation: float | None = None
     wind_speed_10m: float | None = None
     wind_gusts_10m: float | None = None
@@ -547,6 +548,7 @@ class GoldWeather(BaseModel):
     timestamp: datetime
     flight_date: datetime | None = None
     temperature_2m: float | None = None
+    dew_point_2m: float | None = None
     precipitation: float | None = None
     wind_speed_10m: float | None = None
     wind_gusts_10m: float | None = None

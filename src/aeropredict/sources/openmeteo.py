@@ -20,6 +20,7 @@ ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 # Variables horarias que nos interesan para delay prediction
 HOURLY_VARS = [
     "temperature_2m",
+    "dew_point_2m",
     "precipitation",
     "wind_speed_10m",
     "wind_gusts_10m",

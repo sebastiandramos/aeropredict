@@ -88,6 +88,7 @@ WEATHER_FIELDS = {
     "timestamp": 1,
     "flight_date": 1,
     "temperature_2m": 1,
+    "dew_point_2m": 1,
     "precipitation": 1,
     "wind_speed_10m": 1,
     "wind_gusts_10m": 1,
