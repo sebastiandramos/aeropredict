@@ -15,12 +15,40 @@ export interface DelayFeatures {
   aircraft_operator?: string
   weather_temperature_2m?: number | null
   weather_precipitation?: number | null
+  // Predictores del modelo de dos etapas (todos opcionales: el backend los
+  // deriva o imputa con las medianas del entrenamiento).
+  origin_iata?: string | null
+  destination_iata?: string | null
+  other_airport_iata?: string | null
+  dew_point_c?: number | null
+  relative_humidity?: number | null
+}
+
+/**
+ * Factor explicativo devuelto por la API (contribución al log-odds de la
+ * etapa 1). Ojo: `impact: 'positive'` significa que AUMENTA la probabilidad
+ * de retraso (malo); `service.ts` lo traduce a la semántica de la UI.
+ */
+export interface DelayFactor {
+  id: string
+  title: string
+  description: string
+  impact: 'positive' | 'negative'
 }
 
 export interface DelayResponse {
+  // Contrato clásico (siempre presente).
   predicted_delay_minutes: number
   confidence: number
   model_version: string | null
+  // Contrato del modelo de dos etapas (presente con el artefacto local).
+  prob_retraso?: number | null
+  prediccion_retraso_15min?: boolean | null
+  minutos_retraso_estimados?: number | null
+  umbral_aplicado?: number | null
+  factores?: DelayFactor[]
+  imputaciones?: string[]
+  model_source?: string | null
 }
 
 export interface EtaRequest {
@@ -33,6 +61,9 @@ export interface EtaResponse {
   confidence: number
   delay_component: number
   disruption_likely: boolean
+  prob_retraso?: number | null
+  umbral_aplicado?: number | null
+  model_source?: string | null
 }
 
 export interface ApiConfig {

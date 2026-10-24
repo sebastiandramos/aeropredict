@@ -83,7 +83,7 @@ export async function runPrediction(
       predictDelay(features),
       predictEta({ scheduled_arrival: scheduledArrival, features }),
     ])
-    return { delay, eta, factors: deriveFactors(features) }
+    return { delay, eta, factors: factorsFromResponse(delay, features) }
   } catch {
     // Fallback a mock si la API falla en tiempo de ejecución.
     return {
@@ -92,6 +92,27 @@ export async function runPrediction(
       factors: deriveFactors(features),
     }
   }
+}
+
+/**
+ * Usa los factores reales del modelo cuando la API los devuelve y, si no
+ * (modelo legacy o modo demo), cae al desglose heurístico del formulario.
+ *
+ * La API expresa el impacto sobre la probabilidad de retraso:
+ * `positive` = la aumenta (desfavorable). La UI usa la semántica contraria
+ * (`positive` = favorable), así que se invierte aquí.
+ */
+function factorsFromResponse(delay: DelayResponse, features: DelayFeatures): Factor[] {
+  const apiFactors = delay.factores ?? []
+  if (apiFactors.length === 0) {
+    return deriveFactors(features)
+  }
+  return apiFactors.map((factor) => ({
+    id: factor.id,
+    title: factor.title,
+    description: factor.description,
+    impact: factor.impact === 'positive' ? 'negative' : 'positive',
+  }))
 }
 
 /**

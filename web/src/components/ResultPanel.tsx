@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarClock, Clock, Loader2, Plane } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Clock, Loader2, Percent, Plane } from 'lucide-react'
 import type { PredictionResult } from '../lib/service'
 import FactorList from './FactorList'
 
@@ -123,6 +123,26 @@ function SuccessState({ result }: { result: PredictionResult }) {
             <span className="metric-sub">Sobre la hora programada</span>
           </div>
         </div>
+
+        {typeof delay.prob_retraso === 'number' && (
+          <div className="metric-card">
+            <Percent size={18} aria-hidden="true" />
+            <div className="metric-body">
+              <span className="metric-label">Probabilidad de retraso ≥ 15 min</span>
+              <span className="metric-value tabular">
+                {Math.round(delay.prob_retraso * 100)}%
+              </span>
+              <span className="metric-sub">
+                {delay.prediccion_retraso_15min
+                  ? 'Clasificado como retraso'
+                  : 'Clasificado como puntual'}
+                {typeof delay.umbral_aplicado === 'number'
+                  ? ` · umbral ${Math.round(delay.umbral_aplicado * 100)}%`
+                  : ''}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {eta.disruption_likely && (
@@ -135,7 +155,7 @@ function SuccessState({ result }: { result: PredictionResult }) {
       <FactorList factors={result.factors} />
 
       {delay.model_version && (
-        <p className="model-version tabular">Modelo v{delay.model_version}</p>
+        <p className="model-version tabular">Modelo {delay.model_version}</p>
       )}
     </div>
   )

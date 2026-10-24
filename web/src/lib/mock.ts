@@ -76,10 +76,22 @@ export function mockDelay(features: DelayFeatures): DelayResponse {
 
   minutes = clamp(Math.round(minutes), 0, 180)
 
+  const delayed = minutes >= 15
+  const probability = delayed
+    ? clamp(0.5 + (minutes - 15) / 200, 0.5, 0.97)
+    : clamp(0.45 - (15 - minutes) / 60, 0.03, 0.45)
+
   return {
     predicted_delay_minutes: minutes,
-    confidence: 0.85,
+    confidence: delayed ? probability : 1 - probability,
     model_version: MOCK_MODEL_VERSION,
+    prob_retraso: probability,
+    prediccion_retraso_15min: delayed,
+    minutos_retraso_estimados: delayed ? minutes : 0,
+    umbral_aplicado: 0.08,
+    factores: [],
+    imputaciones: [],
+    model_source: 'mock',
   }
 }
 
@@ -96,9 +108,12 @@ export function mockEta(
 
   return {
     estimated_arrival_time: estimated.toISOString(),
-    confidence: 0.85,
-    delay_component: delay.predicted_delay_minutes,
+    confidence: delay.confidence,
+    delay_component: delay.minutos_retraso_estimados ?? delay.predicted_delay_minutes,
     disruption_likely: delay.predicted_delay_minutes > 45,
+    prob_retraso: delay.prob_retraso ?? null,
+    umbral_aplicado: delay.umbral_aplicado ?? null,
+    model_source: 'mock',
   }
 }
 

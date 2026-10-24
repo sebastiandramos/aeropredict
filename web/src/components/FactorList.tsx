@@ -25,8 +25,9 @@ export default function FactorList({ factors }: FactorListProps) {
         <span className="factors-note">Indicativo</span>
       </div>
       <p className="factors-disclaimer">
-        Desglose orientativo a partir de los datos introducidos. La API no
-        devuelve importancia de características.
+        Contribución de cada variable a la probabilidad de retraso del modelo de
+        dos etapas (regresión logística). El sentido indica si aumenta o reduce
+        el riesgo.
       </p>
       <ul className="factors-list">
         {factors.map((f) => {

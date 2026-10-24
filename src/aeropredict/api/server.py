@@ -3,6 +3,7 @@
 Loads an MLflow model at startup (if available) and exposes a /health endpoint.
 Model is attached to app.state.model and app.state.model_version.
 """
+
 from __future__ import annotations
 
 import hmac
@@ -33,6 +34,7 @@ from fastapi.security import APIKeyHeader
 from .models import (
     AlertResponse,
     AuthResponse,
+    DelayFactor,
     DelayPredictionRequest,
     DelayPredictionResponse,
     ETAPredictionRequest,
@@ -42,6 +44,12 @@ from .models import (
     RegisterRequest,
     SubscriptionCreateRequest,
     SubscriptionResponse,
+)
+from .predict import (
+    DEFAULT_ARTIFACT_PATH,
+    DEFAULT_RULES_PATH,
+    DELAY_CLASSIFICATION_MINUTES,
+    TwoStageDelayModel,
 )
 
 # PostgreSQL connection for prediction archival
@@ -101,48 +109,131 @@ logging.basicConfig(
 )
 
 
-MLFLOW_MODEL_URI = os.environ.get(
-    "MLFLOW_MODEL_URI", "models:/delay-predictor/production"
-)
+MLFLOW_MODEL_URI = os.environ.get("MLFLOW_MODEL_URI", "models:/delay-predictor/production")
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns")
+
+# Two-stage notebook model (logistic + GBM) trained by
+# ``scripts/export_r_model_to_python.py``. ``AEROPREDICT_MODEL_SOURCE`` selects
+# the backend: ``auto`` (local artifact, MLflow fallback), ``local`` (artifact
+# only) or ``mlflow`` (registry only).
+MODEL_SOURCE = os.environ.get("AEROPREDICT_MODEL_SOURCE", "auto").strip().lower()
+ARTIFACT_PATH = os.environ.get("AEROPREDICT_ARTIFACT_PATH", DEFAULT_ARTIFACT_PATH)
+RULES_PATH = os.environ.get("AEROPREDICT_RULES_PATH", DEFAULT_RULES_PATH)
+
+
+def _load_two_stage_artifact() -> TwoStageDelayModel | None:
+    """Load the local two-stage artifact when the configured source allows it."""
+    if MODEL_SOURCE not in {"auto", "local"}:
+        return None
+    try:
+        return TwoStageDelayModel.load(ARTIFACT_PATH, RULES_PATH or None)
+    except FileNotFoundError:
+        LOGGER.info("Two-stage artifact not found at %s", ARTIFACT_PATH)
+    except Exception as exc:  # keep serving MLflow/legacy path if the artifact is broken
+        LOGGER.exception("Failed to load two-stage artifact %s: %s", ARTIFACT_PATH, exc)
+    return None
+
+
+def _predict_with_legacy_model(model, features: dict) -> float:
+    """Run the MLflow pyfunc (single-stage LightGBM) and return minutes."""
+    # ensure deterministic column order using model's feature names when available
+    feature_names = []
+    try:
+        if hasattr(model, "metadata") and model.metadata is not None:
+            sig = getattr(model.metadata, "signature", None)
+            if sig is not None and hasattr(sig, "inputs"):
+                feature_names = [inp.name for inp in sig.inputs.inputs() if hasattr(inp, "name")]
+    except Exception:
+        feature_names = []
+
+    frame = pd.DataFrame([features])
+    if feature_names and all(isinstance(x, str) for x in feature_names):
+        cols = [c for c in feature_names if c in frame.columns]
+        if cols:
+            frame = frame.reindex(columns=cols, fill_value=-1)
+
+    prediction = model.predict(frame)
+    if hasattr(prediction, "__len__") and len(prediction) > 0:
+        return float(prediction[0])
+    return float(prediction)
+
+
+def _build_two_stage_response(
+    result: dict, model_version: str, model_source: str
+) -> DelayPredictionResponse:
+    """Translate a ``TwoStageDelayModel.predict`` result into the API contract."""
+    probability = float(result["prob_retraso"])
+    is_delayed = bool(result["prediccion_retraso_15min"])
+    minutes = float(result["minutos_retraso_estimados"])
+    # Confidence follows the same intuition as the demo app: probability of the
+    # class we actually predicted.
+    confidence = probability if is_delayed else 1.0 - probability
+    return DelayPredictionResponse(
+        predicted_delay_minutes=minutes,
+        confidence=confidence,
+        model_version=model_version,
+        prob_retraso=probability,
+        prediccion_retraso_15min=is_delayed,
+        minutos_retraso_estimados=minutes,
+        umbral_aplicado=float(result["umbral_aplicado"]),
+        factores=[DelayFactor(**factor) for factor in result["factores"]],
+        imputaciones=list(result["imputaciones"]),
+        model_source=model_source,
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan manager: configure mlflow and attempt model load into app.state."""
-    # configure tracking uri
+    """Lifespan manager: load the two-stage artifact (preferred) or MLflow model."""
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     app.state.model = None
     app.state.model_version = None
+    app.state.two_stage_model = None
+    app.state.model_source = None
 
     start_ts = time.time()
-    try:
-        LOGGER.info("Loading MLflow model from %s", MLFLOW_MODEL_URI)
-        model = mlflow.pyfunc.load_model(MLFLOW_MODEL_URI)
-        app.state.model = model
-        # model metadata: attempt to read .metadata if present
-        try:
-            mv = getattr(model, "metadata", None)
-            if mv and hasattr(mv, "run_id"):
-                app.state.model_version = str(mv.run_id)
-            else:
-                # fallback to model spec
-                app.state.model_version = getattr(model, "_model_impl", None) and "loaded"
-        except Exception:
-            app.state.model_version = "loaded"
+    two_stage = _load_two_stage_artifact()
+    if two_stage is not None:
+        app.state.two_stage_model = two_stage
+        app.state.model_version = f"two-stage-{two_stage.version}"
+        app.state.model_source = "local_artifact"
         LOGGER.info(
-            "Model loaded successfully (version=%s) in %.2fs",
-            app.state.model_version,
+            "Two-stage model loaded (version=%s, threshold=%.3f) in %.2fs",
+            two_stage.version,
+            two_stage.threshold,
             time.time() - start_ts,
         )
-    except Exception as exc:  # keep server up even if model fails
-        LOGGER.exception("Failed to load model: %s", exc)
-        app.state.model = None
-        app.state.model_version = None
+
+    if two_stage is None and MODEL_SOURCE in {"auto", "mlflow"}:
+        try:
+            LOGGER.info("Loading MLflow model from %s", MLFLOW_MODEL_URI)
+            model = mlflow.pyfunc.load_model(MLFLOW_MODEL_URI)
+            app.state.model = model
+            app.state.model_source = "mlflow"
+            # model metadata: attempt to read .metadata if present
+            try:
+                mv = getattr(model, "metadata", None)
+                if mv and hasattr(mv, "run_id"):
+                    app.state.model_version = str(mv.run_id)
+                else:
+                    # fallback to model spec
+                    app.state.model_version = getattr(model, "_model_impl", None) and "loaded"
+            except Exception:
+                app.state.model_version = "loaded"
+            LOGGER.info(
+                "Model loaded successfully (version=%s) in %.2fs",
+                app.state.model_version,
+                time.time() - start_ts,
+            )
+        except Exception as exc:  # keep server up even if model fails
+            LOGGER.exception("Failed to load model: %s", exc)
+            app.state.model = None
+            app.state.model_version = None
+            app.state.model_source = None
     try:
         yield
     finally:
-        # no explicit shutdown required for mlflow model
+        # no explicit shutdown required for in-memory models
         LOGGER.info("Shutting down FastAPI app")
 
 
@@ -182,9 +273,7 @@ async def api_key_middleware(request: Request, call_next):
         api_key_required = os.environ.get("API_KEY")
         if api_key_required:
             provided_key = request.headers.get("X-API-Key")
-            if not provided_key or not hmac.compare_digest(
-                provided_key, api_key_required
-            ):
+            if not provided_key or not hmac.compare_digest(provided_key, api_key_required):
                 return Response(
                     content='{"detail":"Invalid or missing API key"}',
                     status_code=401,
@@ -201,7 +290,7 @@ async def health(response: Response) -> HealthResponse:
     Returns 200 when model loaded, otherwise 503 with an error detail.
     """
     start = time.time()
-    model = getattr(app.state, "model", None)
+    model = getattr(app.state, "model", None) or getattr(app.state, "two_stage_model", None)
     model_version = getattr(app.state, "model_version", None)
     if model is None:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -231,10 +320,10 @@ async def predict_delay(
     - Archives prediction to gold.predictions in background
     """
     start_ts = perf_counter()
+    two_stage = getattr(app.state, "two_stage_model", None)
     model = getattr(app.state, "model", None)
-    model_version = getattr(app.state, "model_version", None)
     # check model loaded
-    if model is None:
+    if two_stage is None and model is None:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         LOGGER.warning("/predict/delay called but model not loaded")
         raise HTTPException(
@@ -242,39 +331,21 @@ async def predict_delay(
             detail="Model not loaded",
         )
 
-    # prepare features: pydantic -> dict -> single-row DataFrame
+    features = payload.model_dump()
     try:
-        features = payload.model_dump()
-        # ensure deterministic column order using model's feature names when available
-        try:
-            feature_names = []
-            if hasattr(model, "metadata") and model.metadata is not None:
-                sig = getattr(model.metadata, "signature", None)
-                if sig is not None and hasattr(sig, "inputs"):
-                    feature_names = [
-                        inp.name for inp in sig.inputs.inputs() if hasattr(inp, "name")
-                    ]
-        except Exception:
-            feature_names = []
-
-        df = pd.DataFrame([features])
-        # if we have explicit feature_names and they are a list of names, reorder/reindex
-        if feature_names and all(isinstance(x, str) for x in feature_names):
-            # keep only known columns and preserve order
-            cols = [c for c in feature_names if c in df.columns]
-            if cols:
-                df = df.reindex(columns=cols, fill_value=-1)
-
-        # call model.predict - mlflow pyfunc expects DataFrame
-        pred = model.predict(df)
-        # pred may be array-like or scalar
-        if hasattr(pred, "__len__") and len(pred) > 0:
-            pred_val = float(pred[0])
+        if two_stage is not None:
+            result = two_stage.predict(features)
+            model_version = str(result["model_version"])
+            out = _build_two_stage_response(result, model_version, "local_artifact")
         else:
-            pred_val = float(pred)
-
-        # Confidence is a placeholder — LightGBM regression does not expose predict_proba.
-        confidence = 0.85
+            pred_val = _predict_with_legacy_model(model, features)
+            model_version = getattr(app.state, "model_version", None)
+            out = DelayPredictionResponse(
+                predicted_delay_minutes=pred_val,
+                confidence=0.85,  # regression-only model has no calibrated probability
+                model_version=model_version,
+                model_source="mlflow",
+            )
 
         duration_ms = (perf_counter() - start_ts) * 1000.0
 
@@ -284,10 +355,13 @@ async def predict_delay(
         except Exception:
             client_ip = "unknown"
         LOGGER.info(
-            "/predict/delay: input=%s predicted=%.3f model_version=%s duration_ms=%.2f client=%s",
+            "/predict/delay: input=%s predicted=%.3f prob=%s model_version=%s "
+            "source=%s duration_ms=%.2f client=%s",
             features,
-            pred_val,
+            out.predicted_delay_minutes,
+            out.prob_retraso,
             model_version,
+            out.model_source,
             duration_ms,
             client_ip,
         )
@@ -296,11 +370,6 @@ async def predict_delay(
         if duration_ms > 100:
             LOGGER.warning("Inference slow: %.2fms (>100ms)", duration_ms)
 
-        out = DelayPredictionResponse(
-            predicted_delay_minutes=pred_val,
-            confidence=float(confidence),
-            model_version=model_version,
-        )
         response.status_code = status.HTTP_200_OK
 
         # Archive prediction to PostgreSQL in background (non-blocking)
@@ -310,7 +379,7 @@ async def predict_delay(
             request_id=request_id,
             model_version=model_version,
             flight_features=features,
-            predicted_delay_minutes=pred_val,
+            predicted_delay_minutes=out.predicted_delay_minutes,
             predicted_eta=None,
         )
 
@@ -339,9 +408,10 @@ async def predict_eta(
     Archives prediction to gold.predictions in background.
     """
     start_ts = perf_counter()
+    two_stage = getattr(app.state, "two_stage_model", None)
     model = getattr(app.state, "model", None)
     # check model loaded
-    if model is None:
+    if two_stage is None and model is None:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         LOGGER.warning("/predict/eta called but model not loaded")
         raise HTTPException(
@@ -349,22 +419,29 @@ async def predict_eta(
             detail="Model not loaded",
         )
 
-    # prepare features: payload.features -> dict -> single-row DataFrame
+    features_dict = payload.features.model_dump()
     try:
-        features_dict = payload.features.model_dump()
-        df = pd.DataFrame([features_dict])
-
-        # call model.predict - mlflow pyfunc expects DataFrame
-        pred = model.predict(df)
-        if hasattr(pred, "__len__") and len(pred) > 0:
-            pred_val = float(pred[0])
+        if two_stage is not None:
+            result = two_stage.predict(features_dict)
+            predicted_delay = float(result["minutos_retraso_estimados"])
+            probability = float(result["prob_retraso"])
+            is_delayed = bool(result["prediccion_retraso_15min"])
+            confidence = probability if is_delayed else 1.0 - probability
+            model_version = str(result["model_version"])
+            model_source = "local_artifact"
+            threshold = float(result["umbral_aplicado"])
         else:
-            pred_val = float(pred)
+            predicted_delay = _predict_with_legacy_model(model, features_dict)
+            probability = None
+            is_delayed = predicted_delay > DELAY_CLASSIFICATION_MINUTES
+            confidence = 0.85
+            model_version = getattr(app.state, "model_version", None)
+            model_source = "mlflow"
+            threshold = None
 
-        predicted_delay = pred_val
         delay_timedelta = timedelta(minutes=predicted_delay)
         eta = payload.scheduled_arrival + delay_timedelta
-        disruption_likely = predicted_delay > 240
+        disruption_likely = bool(is_delayed) and predicted_delay > 240
 
         duration_ms = (perf_counter() - start_ts) * 1000.0
 
@@ -392,9 +469,12 @@ async def predict_eta(
 
         out = ETAPredictionResponse(
             estimated_arrival_time=eta,
-            confidence=0.85,
+            confidence=confidence,
             delay_component=predicted_delay,
             disruption_likely=disruption_likely,
+            prob_retraso=probability,
+            umbral_aplicado=threshold,
+            model_source=model_source,
         )
         response.status_code = status.HTTP_200_OK
 
@@ -403,7 +483,7 @@ async def predict_eta(
         background_tasks.add_task(
             _log_prediction_to_db,
             request_id=request_id,
-            model_version=getattr(app.state, "model_version", None),
+            model_version=model_version,
             flight_features=features_dict,
             predicted_delay_minutes=predicted_delay,
             predicted_eta=eta.isoformat(),
@@ -612,9 +692,7 @@ async def delete_subscription_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subscription not found",
         )
-    LOGGER.info(
-        "Suscripción eliminada: user_id=%s flight_key=%s", user_id, flight_key
-    )
+    LOGGER.info("Suscripción eliminada: user_id=%s flight_key=%s", user_id, flight_key)
 
 
 @app.get("/alerts", response_model=list[AlertResponse])

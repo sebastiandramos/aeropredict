@@ -13,6 +13,8 @@ export interface FlightFormValues {
   aircraftType: string
   weatherTemperature: string
   weatherPrecipitation: string
+  dewPoint: string
+  relativeHumidity: string
 }
 
 interface FlightFormProps {
@@ -139,6 +141,8 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
     aircraftType: '',
     weatherTemperature: '',
     weatherPrecipitation: '',
+    dewPoint: '',
+    relativeHumidity: '',
   })
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -217,6 +221,16 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
         values.weatherPrecipitation.trim() === ''
           ? null
           : Number(values.weatherPrecipitation),
+      // Predictores del modelo de dos etapas: el backend convierte ICAO→IATA
+      // y deriva rocío/humedad cuando solo se conoce una de las dos.
+      origin_iata: values.origin,
+      destination_iata: values.destination,
+      dew_point_c:
+        values.dewPoint.trim() === '' ? null : Number(values.dewPoint),
+      relative_humidity:
+        values.relativeHumidity.trim() === ''
+          ? null
+          : Number(values.relativeHumidity),
     }
 
     onSubmit(features, scheduledArrival.toISOString())
@@ -367,6 +381,36 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
                 placeholder="Opcional"
                 value={values.weatherPrecipitation}
                 onChange={(e) => set('weatherPrecipitation', e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="weather-dew">
+                Punto de rocío (°C)
+              </label>
+              <input
+                id="weather-dew"
+                className="input"
+                type="number"
+                step="0.1"
+                placeholder="Opcional"
+                value={values.dewPoint}
+                onChange={(e) => set('dewPoint', e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="weather-humidity">
+                Humedad relativa (%)
+              </label>
+              <input
+                id="weather-humidity"
+                className="input"
+                type="number"
+                step="1"
+                min="0"
+                max="100"
+                placeholder="Opcional"
+                value={values.relativeHumidity}
+                onChange={(e) => set('relativeHumidity', e.target.value)}
               />
             </div>
           </div>
