@@ -22,9 +22,10 @@ Se generan en `models/`:
 
 ## Parámetros clave (fidelidad al notebook)
 
-- Umbral de clasificación: **0.08** (seleccionado en validación; distinto de 0.1 mencionado en el prompt).
+- Umbral de clasificación: **0.08** (seleccionado en validación maximizando F1 para `retraso_15_min`; ver `preprocessor_rules.json`).
 - Etapa 1: `glm(family = binomial)` reproducido con `sklearn.linear_model.LogisticRegression(fit_intercept=False, C=np.inf, solver="newton-cholesky")`.
 - Etapa 2: `gbm` con `GradientBoostingRegressor(loss="squared_error", learning_rate=0.03, n_estimators=300, max_depth=3, min_samples_leaf=20, subsample=0.5, random_state=2026)`, objetivo `log1p(retraso_minutos)`, solo vuelos retrasados en desarrollo; predicción `max(floor=15, expm1(pred_log))`.
+- Explicación de factores (etapa 1): los factores se calculan como contribuciones locales al log-odds (suma = `logit`), ordenados por |contribución| y agrupados por dirección (aumentan/reducen el riesgo). Se muestran top 3 por dirección, se filtran contribuciones < 1e-3. Los valores observados se formatean legiblemente; la semántica es asociativa, no causal. Los minutos corresponden a la etapa 2.
 - Rarefacción de categorías: `min_freq=2` → nivel `OTRA` (ordenado al final).
 - Sin fuga: reglas aprendidas solo con datos de entrenamiento/desarrollo según split cronológico 60/20/20.
 - Tratamiento de dummies: contraste por niveles (sin `drop_first`) con `Intercept`, referencia = primer nivel ordenado; matriz alineada al diseño guardado.
@@ -53,7 +54,7 @@ Variables de entorno:
 - `POST /predict/delay` → acepta payload legacy + campos opcionales del notebook. Con artefacto local devuelve contrato ampliado:
   - `predicted_delay_minutes` / `minutos_retraso_estimados` (coinciden)
   - `prob_retraso` (0-1), `prediccion_retraso_15min` (bool), `umbral_aplicado` (0.08)
-  - `factores` (lista con `id`, `title`, `description`, `impact`; `positive` = aumenta la probabilidad de retraso)
+  - `factores` (lista con `id`, `title`, `value`, `contribution`, `direction` en `["increase","decrease"]`, `impact`; `direction: "increase"` = aumenta el riesgo de retraso)
   - `imputaciones` (campos imputados), `model_source` (`local_artifact`), `model_version` (`two-stage-1.0.0`)
 - `POST /predict/eta` → devuelve `prob_retraso`, `umbral_aplicado`, `model_source` cuando usa el modelo de dos etapas.
 
@@ -65,11 +66,11 @@ Variables de entorno:
 
 ## Frontend
 
-- `web/src/lib/types.ts`: añade campos opcionales al contrato y el tipo `DelayFactor`.
-- `web/src/lib/service.ts`: usa `factores` de la API (invirtiendo la semántica para la UI) con fallback heurístico.
+- `web/src/lib/types.ts`: añade campos opcionales al contrato y el tipo `DelayFactor` con `direction`/`contribution`/`value`.
+- `web/src/lib/service.ts`: usa `factores` de la API con su semántica (`direction`) y fallback heurístico; `mock.ts` proporciona factores demo con el nuevo formato.
 - `web/src/components/FlightForm.tsx`: añade «Punto de rocío (°C)» y «Humedad relativa (%)» en campos avanzados; envía `origin_iata`, `destination_iata`, `dew_point_c` y `relative_humidity`.
-- `web/src/components/ResultPanel.tsx`: muestra la tarjeta «Probabilidad de retraso ≥ 15 min» con el umbral aplicado.
-- `web/src/components/FactorList.tsx`: muestra los factores reales del modelo.
+- `web/src/components/ResultPanel.tsx`: muestra «Probabilidad estimada de retraso ≥ 15 min» con el umbral aplicado (se elimina la etiqueta «Confianza del modelo»).
+- `web/src/components/FactorList.tsx`: «Factores que influyen en la predicción», agrupados por «Aumentan el riesgo» / «Reducen el riesgo» (top 3 por dirección), muestra valor observado y contribución en log-odds, aclara etapa 1 vs 2.
 
 ## Tests
 

@@ -89,7 +89,45 @@ export function mockDelay(features: DelayFeatures): DelayResponse {
     prediccion_retraso_15min: delayed,
     minutos_retraso_estimados: delayed ? minutes : 0,
     umbral_aplicado: 0.08,
-    factores: [],
+    factores: [
+      {
+        id: 'hour_peak',
+        title: 'Hora punta',
+        value: `${features.hour_of_day}:00`,
+        contribution: delayed ? 0.42 : -0.16,
+        direction: delayed ? 'increase' : 'decrease',
+        impact: delayed ? 'positive' : 'negative',
+        description: 'Hora de salida en franja punta (mock).',
+      },
+      {
+        id: 'weekend',
+        title: 'Fin de semana',
+        value: features.day_of_week >= 5 ? 'Sí' : 'No',
+        contribution: features.day_of_week >= 5 ? 0.18 : -0.08,
+        direction: features.day_of_week >= 5 ? 'increase' : 'decrease',
+        impact: features.day_of_week >= 5 ? 'positive' : 'negative',
+        description: 'Patrón histórico de la ruta (mock).',
+      },
+      {
+        id: 'precip',
+        title: 'Precipitación',
+        value:
+          features.weather_precipitation != null
+            ? `${features.weather_precipitation} mm/h`
+            : 'Sin dato',
+        contribution:
+          features.weather_precipitation && features.weather_precipitation > 2 ? 0.24 : -0.06,
+        direction:
+          features.weather_precipitation && features.weather_precipitation > 2
+            ? 'increase'
+            : 'decrease',
+        impact:
+          features.weather_precipitation && features.weather_precipitation > 2
+            ? 'positive'
+            : 'negative',
+        description: 'Condiciones meteorológicas en origen/destino (mock).',
+      },
+    ],
     imputaciones: [],
     model_source: 'mock',
   }
