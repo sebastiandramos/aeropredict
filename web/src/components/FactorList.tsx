@@ -12,22 +12,26 @@ const IMPACT_ICON = {
 } as const
 
 const IMPACT_LABEL = {
-  positive: 'Favorable',
-  negative: 'Desfavorable',
-  neutral: 'Neutro',
+  positive: 'Aumenta el riesgo',
+  negative: 'Reduce el riesgo',
+  neutral: 'Impacto neutro',
 } as const
 
 export default function FactorList({ factors }: FactorListProps) {
+  if (factors.length === 0) {
+    return null
+  }
   return (
     <div className="factors">
       <div className="factors-header">
-        <h3 className="panel-title">Factores explicativos</h3>
-        <span className="factors-note">Indicativo</span>
+        <h3 className="panel-title">Factores que influyen en la predicción</h3>
       </div>
       <p className="factors-disclaimer">
-        Contribución de cada variable a la probabilidad de retraso del modelo de
-        dos etapas (regresión logística). El sentido indica si aumenta o reduce
-        el riesgo.
+        Explicación local de la etapa de clasificación (regresión logística).
+        Las contribuciones están en log-odds, no son porcentajes ni minutos de
+        retraso. Indican asociaciones aprendidas por el modelo, no causas
+        demostradas. La estimación de minutos corresponde a la segunda etapa de
+        regresión.
       </p>
       <ul className="factors-list">
         {factors.map((f) => {
@@ -39,12 +43,21 @@ export default function FactorList({ factors }: FactorListProps) {
               </span>
               <div className="factor-body">
                 <div className="factor-title-row">
-                  <span className="factor-title">{f.title}</span>
+                  <span className="factor-title">
+                    {f.title}
+                    {f.value ? ` · ${f.value}` : ''}
+                  </span>
                   <span className={`factor-impact factor-impact-${f.impact}`}>
                     {IMPACT_LABEL[f.impact]}
                   </span>
                 </div>
                 <p className="factor-desc">{f.description}</p>
+                {typeof f.contribution === 'number' && (
+                  <p className="factor-meta tabular">
+                    Contribución: {f.contribution >= 0 ? '+' : ''}
+                    {f.contribution.toFixed(2)} al log-odds
+                  </p>
+                )}
               </div>
             </li>
           )

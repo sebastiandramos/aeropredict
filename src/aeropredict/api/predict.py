@@ -86,10 +86,43 @@ FACTOR_LABELS: dict[str, str] = {
     "relh": "Humedad relativa",
 }
 
+# Spanish weekday names (model coding: 0 = Monday … 6 = Sunday).
+_WEEKDAY_NAMES = (
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+    "Domingo",
+)
+
+# Magnitude below which a contribution is considered noise and omitted from
+# the explanation instead of being reported as a spurious effect.
+MIN_FACTOR_CONTRIBUTION = 1e-3
+
 # Magnus-Tetens coefficients (used only to derive a missing METAR field from
 # the other two, never to alter a provided value).
 _MAGNUS_A = 17.625
 _MAGNUS_B = 243.04
+
+
+def format_factor_value(variable: str, value: Any) -> str:
+    """Format the observed value of a predictor for the explanation payload."""
+    if value is None or (isinstance(value, float) and not np.isfinite(value)):
+        return "sin dato"
+    if variable == "dia_semana":
+        index = int(float(value))
+        return _WEEKDAY_NAMES[index] if 0 <= index < len(_WEEKDAY_NAMES) else str(value)
+    if variable == "hora_vuelo":
+        return f"{int(float(value)):02d}:00"
+    if variable in {"temperatura_metar", "punto_rocio_metar"}:
+        return f"{float(value):.1f} °C"
+    if variable == "relh":
+        return f"{float(value):.0f} %"
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +610,7 @@ class TwoStageDelayModel:
         probability = float(result["prob_retraso"])
         is_delayed = bool(result["prediccion_retraso_15min"])
         minutes = float(result["minutos_retraso_estimados"])
-        factors = self.explain(features, probability)
+        factors = self.explain(features)
         return {
             "prob_retraso": probability,
             "prediccion_retraso_15min": is_delayed,
@@ -593,56 +626,92 @@ class TwoStageDelayModel:
     def explain(
         self,
         features: Mapping[str, Any],
-        probability: float,
         *,
-        top_k: int = 5,
-    ) -> list[dict[str, str]]:
-        """Rank variables by their contribution to the stage-1 log-odds."""
+        max_per_direction: int = 3,
+        min_abs_contribution: float = MIN_FACTOR_CONTRIBUTION,
+    ) -> list[dict[str, Any]]:
+        """Explain the **classification stage** for a single observation.
+
+        Contributions follow the logistic-regression decomposition
+        ``logit(p) = intercept + sum(coef_j * x_j)`` computed on the very same
+        design matrix used to predict, so:
+
+        * positive values push the estimated delay probability up
+          (``direction="increase"``),
+        * negative values push it down (``direction="decrease"``),
+        * near-zero values are dropped instead of reported as noise.
+
+        The numbers are log-odds contributions — **not** percentage points nor
+        minutes — and are a local explanation of this prediction, not a global
+        feature importance. The regression stage (minutes) is not explained
+        here.
+        """
+        _, contributions = self._logit_contributions(features)
+        ranked = sorted(
+            (
+                (variable, contribution)
+                for variable, contribution in contributions.items()
+                if abs(contribution) >= min_abs_contribution
+            ),
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )
+        increasing = [item for item in ranked if item[1] > 0][:max_per_direction]
+        decreasing = [item for item in ranked if item[1] < 0][:max_per_direction]
+        return [
+            self._factor_payload(variable, contribution, features)
+            for variable, contribution in increasing + decreasing
+        ]
+
+    def _logit_contributions(self, features: Mapping[str, Any]) -> tuple[float, dict[str, float]]:
+        """Return ``(intercept, contributions)`` of the stage-1 log-odds.
+
+        ``intercept + sum(contributions.values())`` reconstructs the predicted
+        logit for the observation (verified in the test suite).
+        """
         frame = pd.DataFrame([features])
         prepared = apply_category_rules(frame, self.rules_classification)
         matrix, matrix_columns = build_model_matrix(
             prepared, self.rules_classification, columns=self.columns_classification
         )
         design = build_design_matrix(matrix, matrix_columns, self.columns_classification_design)[0]
-        contributions = {
-            name: float(coef * value)
-            for name, coef, value in zip(
-                self.columns_classification_design,
-                self.coefficients_classification,
-                design,
-                strict=True,
-            )
-        }
 
-        aggregated: dict[str, float] = {}
-        for column, contribution in contributions.items():
-            if column == "(Intercept)":
+        intercept = 0.0
+        aggregated: dict[str, float] = dict.fromkeys(PREDICTOR_VARIABLES, 0.0)
+        for name, coef, value in zip(
+            self.columns_classification_design,
+            self.coefficients_classification,
+            design,
+            strict=True,
+        ):
+            contribution = float(coef * value)
+            if name == "(Intercept)":
+                intercept = contribution
                 continue
+            # One-hot columns are aggregated per source variable: the
+            # contribution of the reference category is exactly 0 (all of its
+            # dummies are 0), so it never shows up as a fake universal effect.
             for variable in PREDICTOR_VARIABLES:
-                if column.startswith(variable):
-                    aggregated[variable] = aggregated.get(variable, 0.0) + contribution
+                if name.startswith(variable):
+                    aggregated[variable] += contribution
                     break
+        return intercept, aggregated
 
-        ordered = sorted(aggregated.items(), key=lambda item: abs(item[1]), reverse=True)
-        factors: list[dict[str, str]] = []
-        for variable, contribution in ordered[:top_k]:
-            if abs(contribution) < 1e-9:
-                continue
-            lowered = contribution > 0
-            factors.append(
-                {
-                    "id": variable,
-                    "title": FACTOR_LABELS.get(variable, variable),
-                    "description": (
-                        f"Valor {features[variable]}; "
-                        f"{'aumenta' if lowered else 'reduce'} la probabilidad estimada "
-                        f"de retraso (contribución {contribution:+.2f} al log-odds, "
-                        f"p={probability:.3f})."
-                    ),
-                    "impact": "negative" if lowered else "positive",
-                }
-            )
-        return factors
+    @staticmethod
+    def _factor_payload(
+        variable: str, contribution: float, features: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        direction = "increase" if contribution > 0 else "decrease"
+        return {
+            "id": variable,
+            "title": FACTOR_LABELS.get(variable, variable),
+            "value": format_factor_value(variable, features.get(variable)),
+            "contribution": round(contribution, 4),
+            "direction": direction,
+            # ``impact`` keeps the original wire semantics: positive means the
+            # variable increases the delay risk.
+            "impact": "positive" if direction == "increase" else "negative",
+        }
 
 
 __all__ = [
@@ -653,6 +722,7 @@ __all__ = [
     "DELAY_CLASSIFICATION_MINUTES",
     "GROUPED_VARIABLES",
     "MIN_CATEGORY_FREQUENCY",
+    "MIN_FACTOR_CONTRIBUTION",
     "N_TREES",
     "PREDICTION_FLOOR_MINUTES",
     "PREDICTOR_VARIABLES",
@@ -665,6 +735,7 @@ __all__ = [
     "build_model_matrix",
     "fit_gbm",
     "fit_logistic",
+    "format_factor_value",
     "learn_category_rules",
     "map_payload_to_model_features",
     "rank_reduce_design",

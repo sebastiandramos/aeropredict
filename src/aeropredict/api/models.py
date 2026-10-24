@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -78,11 +79,20 @@ class DelayPredictionRequest(BaseModel):
 
 
 class DelayFactor(BaseModel):
-    """Model-based explanatory factor for a delay prediction."""
+    """Local explanation of the stage-1 (classification) delay probability.
+
+    ``contribution`` is measured in log-odds, computed for the concrete
+    observation on the same design matrix used by the model. Positive values
+    push the delay probability up (``direction="increase"``), negative values
+    push it down. It is neither a percentage nor a number of minutes.
+    """
 
     id: str
     title: str
-    description: str
+    description: str | None = None
+    value: str | None = None
+    contribution: float | None = None
+    direction: Literal["increase", "decrease"] | None = None
     impact: str
 
     model_config = ConfigDict(from_attributes=True)

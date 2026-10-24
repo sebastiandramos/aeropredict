@@ -96,10 +96,16 @@ function SuccessState({ result }: { result: PredictionResult }) {
         </div>
 
         <div className="delay-confidence">
-          Confianza del modelo:{' '}
+          Probabilidad estimada de retraso ≥ 15 min:{' '}
           <strong className="tabular">
-            {Math.round(delay.confidence * 100)}%
+            {typeof delay.prob_retraso === 'number' ? Math.round(delay.prob_retraso * 100) : '—'}%
           </strong>
+          {typeof delay.umbral_aplicado === 'number' && (
+            <span className="delay-confidence-sub">
+              {' '}
+              · umbral {Math.round(delay.umbral_aplicado * 100)}%
+            </span>
+          )}
         </div>
       </div>
 

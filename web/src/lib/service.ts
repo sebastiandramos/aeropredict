@@ -25,6 +25,7 @@ import type {
   AuthRequest,
   AuthResponse,
   ConnectionStatus,
+  DelayFactor,
   DelayFeatures,
   DelayResponse,
   EtaResponse,
@@ -37,6 +38,9 @@ export interface Factor {
   id: string
   title: string
   description: string
+  value?: string
+  contribution?: number
+  direction?: 'increase' | 'decrease'
   impact: 'positive' | 'negative' | 'neutral'
 }
 
@@ -98,21 +102,51 @@ export async function runPrediction(
  * Usa los factores reales del modelo cuando la API los devuelve y, si no
  * (modelo legacy o modo demo), cae al desglose heurístico del formulario.
  *
- * La API expresa el impacto sobre la probabilidad de retraso:
- * `positive` = la aumenta (desfavorable). La UI usa la semántica contraria
- * (`positive` = favorable), así que se invierte aquí.
+ * Los factores del artefacto local son una explicación LOCAL de la etapa de
+ * clasificación (contribución en log-odds para este vuelo). Se muestran tal
+ * como los calcula el modelo: ``direction: 'increase'`` aumenta el riesgo de
+ * retraso, ``decrease`` lo reduce. No se invierte la semántica aquí para
+ * mantener la coherencia con la respuesta de la API.
  */
+function formatLogOdds(contribution: number): string {
+  if (!Number.isFinite(contribution)) {
+    return ''
+  }
+  const sign = contribution >= 0 ? '+' : ''
+  return `${sign}${contribution.toFixed(2)}`
+}
+
 function factorsFromResponse(delay: DelayResponse, features: DelayFeatures): Factor[] {
-  const apiFactors = delay.factores ?? []
+  const apiFactors = (delay.factores ?? []) as DelayFactor[]
   if (apiFactors.length === 0) {
     return deriveFactors(features)
   }
-  return apiFactors.map((factor) => ({
-    id: factor.id,
-    title: factor.title,
-    description: factor.description,
-    impact: factor.impact === 'positive' ? 'negative' : 'positive',
-  }))
+  return apiFactors
+    .map((factor) => {
+      const direction =
+        factor.direction ??
+        (factor.impact === 'positive' ? 'increase' : factor.impact === 'negative' ? 'decrease' : undefined)
+      if (!direction) {
+        return null
+      }
+      const contribution = typeof factor.contribution === 'number' ? factor.contribution : undefined
+      const value = factor.value ? factor.value : undefined
+      const parts = [factor.title + (value ? ` ${value}` : '')]
+      if (typeof contribution === 'number') {
+        parts.push(`contribución ${formatLogOdds(contribution)} al log-odds`)
+      }
+      parts.push(direction === 'increase' ? 'Aumenta el riesgo' : 'Reduce el riesgo')
+      return {
+        id: factor.id,
+        title: factor.title,
+        description: factor.description || parts.join(' · '),
+        value,
+        contribution,
+        direction,
+        impact: direction === 'increase' ? 'negative' : 'positive',
+      } satisfies Factor
+    })
+    .filter((f) => f !== null) as unknown as Factor[]
 }
 
 /**

@@ -570,6 +570,10 @@
   color: var(--color-text-strong);
 }
 
+.delay-confidence-sub {
+  color: var(--color-text-muted);
+}
+
 /* ---------- Metric cards ---------- */
 .result-metrics {
   display: grid;
@@ -744,6 +748,12 @@
 .factor-desc {
   font-size: var(--text-small);
   color: var(--color-text-secondary);
+  margin-top: var(--space-1);
+}
+
+.factor-meta {
+  font-size: var(--text-small);
+  color: var(--color-text-muted);
   margin-top: var(--space-1);
 }
 

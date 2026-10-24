@@ -25,15 +25,24 @@ export interface DelayFeatures {
 }
 
 /**
- * Factor explicativo devuelto por la API (contribución al log-odds de la
- * etapa 1). Ojo: `impact: 'positive'` significa que AUMENTA la probabilidad
- * de retraso (malo); `service.ts` lo traduce a la semántica de la UI.
+ * Factor explicativo devuelto por la API: contribución LOCAL de una variable
+ * al log-odds de la etapa de clasificación, calculada para esta predicción.
+ * `direction: 'increase'` significa que empuja la probabilidad de retraso
+ * hacia arriba. No es un porcentaje ni minutos de retraso.
  */
+export type FactorDirection = 'increase' | 'decrease'
+
 export interface DelayFactor {
   id: string
   title: string
-  description: string
-  impact: 'positive' | 'negative'
+  /** Valor observado de la variable, ya formateado por el backend. */
+  value?: string | null
+  /** Contribución en log-odds (positiva = aumenta el riesgo). */
+  contribution?: number | null
+  direction?: FactorDirection | null
+  /** Semántica antigua del wire: positive = aumenta el riesgo. */
+  impact?: 'positive' | 'negative' | string
+  description?: string | null
 }
 
 export interface DelayResponse {
