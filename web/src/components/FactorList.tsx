@@ -1,5 +1,5 @@
 import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react'
-import type { Factor } from '../lib/service'
+import type { Factor } from '../lib/types'
 
 interface FactorListProps {
   factors: Factor[]
@@ -19,12 +19,12 @@ const IMPACT_LABEL = {
 
 function sortFactors(factors: Factor[]) {
   const increases = factors
-    .filter((f) => f.direction === 'increase' || f.impact === 'negative')
+    .filter((f) => f.direction === 'increase' || (f.direction === undefined && (f.contribution ?? 0) > 0))
     .slice()
     .sort((a, b) => Math.abs(b.contribution ?? 0) - Math.abs(a.contribution ?? 0))
     .slice(0, 3)
   const decreases = factors
-    .filter((f) => f.direction === 'decrease' || f.impact === 'positive')
+    .filter((f) => f.direction === 'decrease' || (f.direction === undefined && (f.contribution ?? 0) < 0))
     .slice()
     .sort((a, b) => Math.abs(b.contribution ?? 0) - Math.abs(a.contribution ?? 0))
     .slice(0, 3)
@@ -80,11 +80,9 @@ export default function FactorList({ factors }: FactorListProps) {
         <h3 className="panel-title">Factores que influyen en la predicción</h3>
       </div>
       <p className="factors-disclaimer">
-        Explicación local de la etapa de clasificación (regresión logística).
-        Las contribuciones están en log-odds, no son porcentajes ni minutos de
-        retraso. Indican asociaciones aprendidas por el modelo, no causas
-        demostradas. La estimación de minutos corresponde a a la segunda etapa de
-        regresión.
+        Estos factores muestran cómo han influido algunas variables en la probabilidad estimada de retraso. Indican asociaciones aprendidas por el modelo y no demuestran que una variable sea la causa del retraso.
+        Las contribuciones están en log-odds, no son porcentajes ni minutos de retraso. La contribución indica la dirección en la que cada variable desplaza la estimación del modelo.
+        Los factores mostrados explican la estimación del riesgo de retraso de la primera etapa del modelo. La estimación de minutos corresponde a una segunda etapa de regresión.
       </p>
       {renderGroup(increases, 'Aumentan el riesgo')}
       {renderGroup(decreases, 'Reducen el riesgo')}

@@ -28,27 +28,14 @@ import type {
   DelayFactor,
   DelayFeatures,
   DelayResponse,
-  EtaResponse,
+  Factor,
   HealthResponse,
+  PredictionResult,
   Subscription,
   SubscriptionCreateRequest,
 } from './types'
 
-export interface Factor {
-  id: string
-  title: string
-  description: string
-  value?: string
-  contribution?: number
-  direction?: 'increase' | 'decrease'
-  impact: 'positive' | 'negative' | 'neutral'
-}
 
-export interface PredictionResult {
-  delay: DelayResponse
-  eta: EtaResponse
-  factors: Factor[]
-}
 
 export async function checkHealth(): Promise<{
   status: ConnectionStatus
@@ -65,8 +52,8 @@ export async function checkHealth(): Promise<{
     }
     return { status: 'error', modelVersion: health.model_version }
   } catch {
-    // Si la API no responde, caemos a demo para que la app siga funcionando.
-    return { status: 'demo', modelVersion: mockHealth().model_version }
+    // No fallback to mock when API is disabled; surface error state.
+    return { status: 'error', modelVersion: null }
   }
 }
 
@@ -79,6 +66,7 @@ export async function runPrediction(
       delay: mockDelay(features),
       eta: mockEta(scheduledArrival, features),
       factors: deriveFactors(features),
+      origin: 'demo',
     }
   }
 
@@ -87,14 +75,10 @@ export async function runPrediction(
       predictDelay(features),
       predictEta({ scheduled_arrival: scheduledArrival, features }),
     ])
-    return { delay, eta, factors: factorsFromResponse(delay, features) }
+    return { delay, eta, factors: factorsFromResponse(delay, features), origin: 'service' }
   } catch {
-    // Fallback a mock si la API falla en tiempo de ejecución.
-    return {
-      delay: mockDelay(features),
-      eta: mockEta(scheduledArrival, features),
-      factors: deriveFactors(features),
-    }
+    // No silent mock fallback; propagate error to caller.
+    throw new Error('Prediction service unavailable')
   }
 }
 
@@ -143,7 +127,7 @@ function factorsFromResponse(delay: DelayResponse, features: DelayFeatures): Fac
         value,
         contribution,
         direction,
-        impact: direction === 'increase' ? 'negative' : 'positive',
+        impact: direction === 'increase' ? 'positive' : 'negative',
       } satisfies Factor
     })
     .filter((f) => f !== null) as unknown as Factor[]

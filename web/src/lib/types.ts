@@ -146,3 +146,32 @@ export interface Alert {
   read: boolean
   created_at: string
 }
+
+// ===================================================================
+// Service layer types
+// ===================================================================
+
+export interface Factor {
+  id: string
+  title: string
+  description: string
+  value?: string
+  contribution?: number
+  direction?: 'increase' | 'decrease'
+  impact: 'positive' | 'negative' | 'neutral'
+}
+
+export interface PredictionResult {
+  delay: DelayResponse
+  eta: EtaResponse
+  factors: Factor[]
+  origin: 'service' | 'demo'
+}
+
+export interface FlightSummary {
+  originIata: string
+  destinationIata: string
+  airline: string
+  departureDate: string
+  departureTime: string
+}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, Plane, Search } from 'lucide-react'
 import { AIRPORTS, COMMON_AIRLINES } from '../data/airports'
 import { haversineKm } from '../lib/geo'
@@ -20,6 +20,7 @@ export interface FlightFormValues {
 interface FlightFormProps {
   onSubmit: (features: DelayFeatures, scheduledArrival: string) => void
   loading: boolean
+  onValuesChange?: (values: FlightFormValues) => void
 }
 
 function toLocalInputValue(date: Date): string {
@@ -49,6 +50,7 @@ function AirportSelect({
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [highlighted, setHighlighted] = useState(-1)
 
   const selected = AIRPORTS.find((a) => a.icao === value)
 
@@ -58,16 +60,22 @@ function AirportSelect({
     return AIRPORTS.filter(
       (a) =>
         a.icao.toLowerCase().includes(q) ||
+        a.iata.toLowerCase().includes(q) ||
         a.name.toLowerCase().includes(q) ||
         a.city.toLowerCase().includes(q) ||
         a.country.toLowerCase().includes(q),
     )
   }, [query])
 
+  useEffect(() => {
+    setHighlighted(-1)
+  }, [query, open])
+
   function handleSelect(icao: string) {
     onChange(icao)
     setQuery('')
     setOpen(false)
+    setHighlighted(-1)
   }
 
   return (
@@ -86,12 +94,33 @@ function AirportSelect({
             aria-controls={`${id}-listbox`}
             aria-autocomplete="list"
             aria-required={required}
-            value={open ? query : selected ? `${selected.icao} — ${selected.name}` : ''}
+            aria-activedescendant={highlighted >= 0 ? `${id}-option-${filtered[highlighted]?.icao}` : undefined}
+            value={open ? query : selected ? `${selected.city} — ${selected.name} (${selected.iata})` : ''}
             placeholder={placeholder}
             onFocus={() => setOpen(true)}
             onChange={(e) => {
               setQuery(e.target.value)
               setOpen(true)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setOpen(true)
+                setHighlighted((h) => Math.min(h + 1, filtered.length - 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setOpen(true)
+                setHighlighted((h) => Math.max(h - 1, 0))
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                if (highlighted >= 0 && filtered[highlighted]) {
+                  handleSelect(filtered[highlighted].icao)
+                } else if (selected) {
+                  handleSelect(selected.icao)
+                }
+              } else if (e.key === 'Escape') {
+                setOpen(false)
+              }
             }}
             onBlur={() => setTimeout(() => setOpen(false), 150)}
             autoComplete="off"
@@ -103,26 +132,30 @@ function AirportSelect({
             {filtered.length === 0 && (
               <li className="airport-empty">Sin resultados</li>
             )}
-            {filtered.map((a) => (
-              <li
-                key={a.icao}
-                role="option"
-                aria-selected={a.icao === value}
-                className={`airport-option ${a.icao === value ? 'airport-option-selected' : ''}`}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  handleSelect(a.icao)
-                }}
-              >
-                <span className="airport-icao tabular">{a.icao}</span>
-                <span className="airport-meta">
-                  <span className="airport-name">{a.name}</span>
-                  <span className="airport-city">
-                    {a.city} · {a.country}
+            {filtered.map((a, idx) => {
+              const isSelected = a.icao === value
+              const isHighlighted = highlighted === idx
+              return (
+                <li
+                  key={a.icao}
+                  id={`${id}-option-${a.icao}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`airport-option ${isSelected ? 'airport-option-selected' : ''} ${isHighlighted ? 'airport-option-highlighted' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    handleSelect(a.icao)
+                  }}
+                >
+                  <span className="airport-label">
+                    {a.city} — {a.name} ({a.iata})
                   </span>
-                </span>
-              </li>
-            ))}
+                  <span className="airport-sublabel">
+                    {a.icao} · {a.country}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -130,7 +163,7 @@ function AirportSelect({
   )
 }
 
-export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
+export default function FlightForm({ onSubmit, loading, onValuesChange }: FlightFormProps) {
   const now = new Date()
   const [values, setValues] = useState<FlightFormValues>({
     origin: '',
@@ -146,6 +179,10 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
   })
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    onValuesChange?.(values)
+  }, [values.origin, values.destination, values.airline, values.departureDate, values.departureTime, onValuesChange])
 
   const originAirport = AIRPORTS.find((a) => a.icao === values.origin)
   const destAirport = AIRPORTS.find((a) => a.icao === values.destination)
@@ -298,6 +335,7 @@ export default function FlightForm({ onSubmit, loading }: FlightFormProps) {
           <label className="field-label" htmlFor="departure-time">
             Hora de salida
           </label>
+          <span className="field-hint">Hora local del aeropuerto de origen</span>
           <input
             id="departure-time"
             className="input"
