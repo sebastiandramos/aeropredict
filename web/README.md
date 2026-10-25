@@ -10,8 +10,7 @@ predicción para mostrar:
 
 - **Probabilidad / retraso previsto** (severidad: puntual / moderado / severo).
 - **Hora estimada de llegada** (ETA) y componente de retraso.
-- **Factores explicativos** desglosados (indicativos — derivados del formulario,
-  la API no devuelve importancia de features).
+- **Factores explicativos** (locales o reales): con el artefacto local de dos etapas se muestran factores reales de la etapa de clasificación (contribución al log-odds), agrupados en «Aumentan el riesgo» / «Reducen el riesgo» (top 3 por dirección), con valor observado y contribución. En modo demo se generan factores deterministas con ese formato. Si la API no devuelve factores, se usa un desglose heurístico indicativo.
 
 Cubre las tarjetas de Trello de *App / Producto*: definición de pantalla, input
 de vuelo/ruta, mostrar probabilidad de retraso y mostrar factores explicativos.
@@ -41,8 +40,10 @@ Build: `npm run build` → `web/dist/`. Lint: `npm run lint`.
 | Método | Ruta | Request | Response |
 |---|---|---|---|
 | GET | `/health` | — | `{status, model_version}` |
-| POST | `/predict/delay` | `DelayFeatures` | `{predicted_delay_minutes, confidence, model_version}` |
-| POST | `/predict/eta` | `{scheduled_arrival, features}` | `{estimated_arrival_time, confidence, delay_component, disruption_likely}` |
+| POST | `/predict/delay` | `DelayFeatures` | `{predicted_delay_minutes, confidence, model_version, prob_retraso?, prediccion_retraso_15min?, minutos_retraso_estimados?, umbral_aplicado?, factores?, imputaciones?, model_source?}` |
+
+`factores` (artefacto local): lista con `id`, `title`, `value`, `contribution` (log-odds), `direction` (`increase` | `decrease`), `impact` y `description`. `direction: "increase"` = aumenta el riesgo. Solo etapa de clasificación.
+| POST | `/predict/eta` | `{scheduled_arrival, features}` | `{estimated_arrival_time, confidence, delay_component, disruption_likely, prob_retraso?, umbral_aplicado?, model_source?}` |
 | POST | `/auth/register` | `{email, password}` | `201 → {token, user_id, email, expires_in}` · `409` email ya registrado · `422` validación |
 | POST | `/auth/login` | `{email, password}` | `200 → {token, user_id, email, expires_in}` · `401` credenciales inválidas |
 | GET | `/alerts/subscriptions` | — (Bearer) | `200 → Subscription[]` · `401` sin token válido |
@@ -54,6 +55,18 @@ Build: `npm run build` → `web/dist/`. Lint: `npm run lint`.
 `DelayFeatures`: `hour_of_day`, `day_of_week`, `airline`, `route_distance`
 (obligatorios); `aircraft_type`, `aircraft_manufacturer`, `aircraft_operator`,
 `weather_temperature_2m`, `weather_precipitation` (opcionales).
+
+Campos opcionales del modelo de dos etapas: `origin_iata`, `destination_iata`
+(ICAO o IATA; el backend convierte y elige el aeropuerto «otro»),
+`other_airport_iata` (override IATA), `dew_point_c` y `relative_humidity`
+(se derivan entre sí con Magnus cuando falta uno; si faltan ambos se imputa la
+mediana de entrenamiento).
+
+Cuando el backend sirve el artefacto local (`model_source: "local_artifact"`),
+`confidence` es la probabilidad de la clase predicha, `factores` trae las
+contribuciones reales de la regresión logística (`direction: "increase"` = aumenta
+el riesgo de retraso), `umbral_aplicado` es el umbral de clasificación (0.08) y
+se muestran agrupados por dirección en la UI.
 
 `SubscriptionCreateRequest`: `flight_key`, `flight_number`, `from_airport`,
 `to_airport`, `schedule_local`, `threshold_minutes` (default 60), `email`

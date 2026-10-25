@@ -76,10 +76,60 @@ export function mockDelay(features: DelayFeatures): DelayResponse {
 
   minutes = clamp(Math.round(minutes), 0, 180)
 
+  const delayed = minutes >= 15
+  const probability = delayed
+    ? clamp(0.5 + (minutes - 15) / 200, 0.5, 0.97)
+    : clamp(0.45 - (15 - minutes) / 60, 0.03, 0.45)
+
   return {
     predicted_delay_minutes: minutes,
-    confidence: 0.85,
+    confidence: delayed ? probability : 1 - probability,
     model_version: MOCK_MODEL_VERSION,
+    prob_retraso: probability,
+    prediccion_retraso_15min: delayed,
+    minutos_retraso_estimados: delayed ? minutes : 0,
+    umbral_aplicado: 0.08,
+    factores: [
+      {
+        id: 'hour_peak',
+        title: 'Hora punta',
+        value: `${features.hour_of_day}:00`,
+        contribution: delayed ? 0.42 : -0.16,
+        direction: delayed ? 'increase' : 'decrease',
+        impact: delayed ? 'positive' : 'negative',
+        description: 'Hora de salida en franja punta (mock).',
+      },
+      {
+        id: 'weekend',
+        title: 'Fin de semana',
+        value: features.day_of_week >= 5 ? 'Sí' : 'No',
+        contribution: features.day_of_week >= 5 ? 0.18 : -0.08,
+        direction: features.day_of_week >= 5 ? 'increase' : 'decrease',
+        impact: features.day_of_week >= 5 ? 'positive' : 'negative',
+        description: 'Patrón histórico de la ruta (mock).',
+      },
+      {
+        id: 'precip',
+        title: 'Precipitación',
+        value:
+          features.weather_precipitation != null
+            ? `${features.weather_precipitation} mm/h`
+            : 'Sin dato',
+        contribution:
+          features.weather_precipitation && features.weather_precipitation > 2 ? 0.24 : -0.06,
+        direction:
+          features.weather_precipitation && features.weather_precipitation > 2
+            ? 'increase'
+            : 'decrease',
+        impact:
+          features.weather_precipitation && features.weather_precipitation > 2
+            ? 'positive'
+            : 'negative',
+        description: 'Condiciones meteorológicas en origen/destino (mock).',
+      },
+    ],
+    imputaciones: [],
+    model_source: 'mock',
   }
 }
 
@@ -96,9 +146,12 @@ export function mockEta(
 
   return {
     estimated_arrival_time: estimated.toISOString(),
-    confidence: 0.85,
-    delay_component: delay.predicted_delay_minutes,
+    confidence: delay.confidence,
+    delay_component: delay.minutos_retraso_estimados ?? delay.predicted_delay_minutes,
     disruption_likely: delay.predicted_delay_minutes > 45,
+    prob_retraso: delay.prob_retraso ?? null,
+    umbral_aplicado: delay.umbral_aplicado ?? null,
+    model_source: 'mock',
   }
 }
 

@@ -2,12 +2,14 @@
 
 Uses Pydantic v2 ConfigDict style per repository conventions.
 """
+
 from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -18,7 +20,9 @@ class HealthResponse(BaseModel):
 
 
 class DelayPredictionRequest(BaseModel):
-    # feature set used by the baseline model (see scripts/train_baseline_helpers.py)
+    # Feature set used by the baseline model (see scripts/train_baseline_helpers.py)
+    # plus the notebook's two-stage predictors. Every field added for the
+    # two-stage model is optional so existing clients keep working unchanged.
     hour_of_day: int
     day_of_week: int
     airline: str
@@ -29,14 +33,84 @@ class DelayPredictionRequest(BaseModel):
     # weather fields (optional)
     weather_temperature_2m: float | None = None
     weather_precipitation: float | None = None
+    # --- two-stage notebook predictors (optional) -------------------------
+    # Route endpoints in ICAO or IATA. The notebook's ``other_airport_iata``
+    # is derived from these (the airport that is not the AENA one).
+    origin_iata: str | None = None
+    destination_iata: str | None = None
+    # Explicit override for the notebook predictor (IATA), if the caller
+    # already knows which airport is the "other" one.
+    other_airport_iata: str | None = None
+    # METAR predictors. Missing values are imputed with development medians;
+    # dew point / humidity are derived from each other when possible.
+    dew_point_c: float | None = None
+    relative_humidity: float | None = None
 
     model_config = ConfigDict(from_attributes=True, frozen=True, extra="forbid")
 
+    @field_validator("hour_of_day")
+    @classmethod
+    def _hour_in_range(cls, value: int) -> int:
+        if not 0 <= value <= 23:
+            raise ValueError("hour_of_day must be between 0 and 23")
+        return value
+
+    @field_validator("day_of_week")
+    @classmethod
+    def _day_in_range(cls, value: int) -> int:
+        # Frontend convention: 0 = Monday ... 6 = Sunday.
+        if not 0 <= value <= 6:
+            raise ValueError("day_of_week must be between 0 (Monday) and 6 (Sunday)")
+        return value
+
+    @field_validator("route_distance")
+    @classmethod
+    def _distance_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("route_distance must be non-negative")
+        return value
+
+    @field_validator("relative_humidity")
+    @classmethod
+    def _humidity_in_range(cls, value: float | None) -> float | None:
+        if value is not None and not 0 <= value <= 100:
+            raise ValueError("relative_humidity must be between 0 and 100")
+        return value
+
+
+class DelayFactor(BaseModel):
+    """Local explanation of the stage-1 (classification) delay probability.
+
+    ``contribution`` is measured in log-odds, computed for the concrete
+    observation on the same design matrix used by the model. Positive values
+    push the delay probability up (``direction="increase"``), negative values
+    push it down. It is neither a percentage nor a number of minutes.
+    """
+
+    id: str
+    title: str
+    description: str | None = None
+    value: str | None = None
+    contribution: float | None = None
+    direction: Literal["increase", "decrease"] | None = None
+    impact: str
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 class DelayPredictionResponse(BaseModel):
+    # Legacy contract (kept so existing clients and tests keep working).
     predicted_delay_minutes: float
     confidence: float
     model_version: str | None = None
+    # Two-stage contract returned by the notebook model.
+    prob_retraso: float | None = None
+    prediccion_retraso_15min: bool | None = None
+    minutos_retraso_estimados: float | None = None
+    umbral_aplicado: float | None = None
+    factores: list[DelayFactor] = Field(default_factory=list)
+    imputaciones: list[str] = Field(default_factory=list)
+    model_source: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,6 +127,9 @@ class ETAPredictionResponse(BaseModel):
     confidence: float
     delay_component: float
     disruption_likely: bool = False
+    prob_retraso: float | None = None
+    umbral_aplicado: float | None = None
+    model_source: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -39,6 +39,7 @@ export default function App() {
   const [result, setResult] = useState<ResultState>({ kind: 'empty' })
   const [session, setSession] = useState<Session | null>(() => loadSession())
   const [view, setView] = useState<AppView>('predictor')
+  const [formValues, setFormValues] = useState<{origin:string; destination:string; airline:string; departureDate:string; departureTime:string}>({origin:'', destination:'', airline:'', departureDate:'', departureTime:''})
 
   useEffect(() => {
     let cancelled = false
@@ -53,11 +54,28 @@ export default function App() {
     }
   }, [])
 
+  // Invalidate result when form inputs change after a successful prediction
+  useEffect(() => {
+    if (result.kind === 'success') {
+      setResult({ kind: 'empty' })
+    }
+  }, [formValues.origin, formValues.destination, formValues.airline, formValues.departureDate, formValues.departureTime])
+
   async function handleSubmit(features: DelayFeatures, scheduledArrival: string) {
     setResult({ kind: 'loading' })
     try {
       const prediction = await runPrediction(features, scheduledArrival)
-      setResult({ kind: 'success', result: prediction })
+      setResult({
+        kind: 'success',
+        result: prediction,
+        flightSummary: {
+          originIata: formValues.origin,
+          destinationIata: formValues.destination,
+          airline: formValues.airline,
+          departureDate: formValues.departureDate,
+          departureTime: formValues.departureTime,
+        }
+      })
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Error inesperado al predecir.'
@@ -114,7 +132,7 @@ export default function App() {
               <div className="layout">
                 <section className="panel form-panel" aria-label="Datos del vuelo">
                   <h2 className="panel-title">Datos del vuelo</h2>
-                  <FlightForm onSubmit={handleSubmit} loading={result.kind === 'loading'} />
+                  <FlightForm onSubmit={handleSubmit} loading={result.kind === 'loading'} onValuesChange={(v) => setFormValues({origin: v.origin, destination: v.destination, airline: v.airline, departureDate: v.departureDate, departureTime: v.departureTime})} />
                 </section>
 
                 <ResultPanel state={result} />

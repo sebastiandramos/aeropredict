@@ -15,12 +15,49 @@ export interface DelayFeatures {
   aircraft_operator?: string
   weather_temperature_2m?: number | null
   weather_precipitation?: number | null
+  // Predictores del modelo de dos etapas (todos opcionales: el backend los
+  // deriva o imputa con las medianas del entrenamiento).
+  origin_iata?: string | null
+  destination_iata?: string | null
+  other_airport_iata?: string | null
+  dew_point_c?: number | null
+  relative_humidity?: number | null
+}
+
+/**
+ * Factor explicativo devuelto por la API: contribución LOCAL de una variable
+ * al log-odds de la etapa de clasificación, calculada para esta predicción.
+ * `direction: 'increase'` significa que empuja la probabilidad de retraso
+ * hacia arriba. No es un porcentaje ni minutos de retraso.
+ */
+export type FactorDirection = 'increase' | 'decrease'
+
+export interface DelayFactor {
+  id: string
+  title: string
+  /** Valor observado de la variable, ya formateado por el backend. */
+  value?: string | null
+  /** Contribución en log-odds (positiva = aumenta el riesgo). */
+  contribution?: number | null
+  direction?: FactorDirection | null
+  /** Semántica antigua del wire: positive = aumenta el riesgo. */
+  impact?: 'positive' | 'negative' | string
+  description?: string | null
 }
 
 export interface DelayResponse {
+  // Contrato clásico (siempre presente).
   predicted_delay_minutes: number
   confidence: number
   model_version: string | null
+  // Contrato del modelo de dos etapas (presente con el artefacto local).
+  prob_retraso?: number | null
+  prediccion_retraso_15min?: boolean | null
+  minutos_retraso_estimados?: number | null
+  umbral_aplicado?: number | null
+  factores?: DelayFactor[]
+  imputaciones?: string[]
+  model_source?: string | null
 }
 
 export interface EtaRequest {
@@ -33,6 +70,9 @@ export interface EtaResponse {
   confidence: number
   delay_component: number
   disruption_likely: boolean
+  prob_retraso?: number | null
+  umbral_aplicado?: number | null
+  model_source?: string | null
 }
 
 export interface ApiConfig {
@@ -105,4 +145,33 @@ export interface Alert {
   email_sent: boolean
   read: boolean
   created_at: string
+}
+
+// ===================================================================
+// Service layer types
+// ===================================================================
+
+export interface Factor {
+  id: string
+  title: string
+  description: string
+  value?: string
+  contribution?: number
+  direction?: 'increase' | 'decrease'
+  impact: 'positive' | 'negative' | 'neutral'
+}
+
+export interface PredictionResult {
+  delay: DelayResponse
+  eta: EtaResponse
+  factors: Factor[]
+  origin: 'service' | 'demo'
+}
+
+export interface FlightSummary {
+  originIata: string
+  destinationIata: string
+  airline: string
+  departureDate: string
+  departureTime: string
 }

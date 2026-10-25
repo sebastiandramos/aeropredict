@@ -1,12 +1,13 @@
 import { AlertTriangle, CalendarClock, Clock, Loader2, Plane } from 'lucide-react'
-import type { PredictionResult } from '../lib/service'
+import type { PredictionResult, FlightSummary } from '../lib/types'
+import { AIRPORTS } from '../data/airports'
 import FactorList from './FactorList'
 
 export type ResultState =
   | { kind: 'empty' }
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'success'; result: PredictionResult }
+  | { kind: 'success'; result: PredictionResult; flightSummary: FlightSummary }
 
 interface ResultPanelProps {
   state: ResultState
@@ -29,7 +30,7 @@ const SEVERITY_LABEL: Record<Severity, string> = {
 function formatTime(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function formatDate(iso: string): string {
@@ -75,31 +76,58 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
-function SuccessState({ result }: { result: PredictionResult }) {
+function SuccessState({ result, flightSummary }: { result: PredictionResult; flightSummary: FlightSummary }) {
   const { delay, eta } = result
   const severity = severityFor(delay.predicted_delay_minutes)
   const isOnTime = severity === 'ontime'
 
+  const originAirport = AIRPORTS.find(a => a.icao === flightSummary.originIata)
+  const destAirport = AIRPORTS.find(a => a.icao === flightSummary.destinationIata)
+  const originCity = originAirport ? originAirport.city : flightSummary.originIata
+  const destCity = destAirport ? destAirport.city : flightSummary.destinationIata
+
+  const departureDateObj = new Date(`${flightSummary.departureDate}T${flightSummary.departureTime}`)
+  const formattedDate = Number.isNaN(departureDateObj.getTime())
+    ? `${flightSummary.departureDate} ${flightSummary.departureTime}`
+    : departureDateObj.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
+  const formattedTime = Number.isNaN(departureDateObj.getTime())
+    ? flightSummary.departureTime
+    : departureDateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false })
+
   return (
     <div className="result-success">
+      <div className="flight-summary-header">
+        <span className="flight-summary-route">{originCity} → {destCity}</span>
+        <span className="flight-summary-meta">· {flightSummary.airline} · {formattedDate} · Salida {formattedTime} (hora local del aeropuerto de origen)</span>
+      </div>
       <div className="result-hero">
-        <div className={`severity severity-${severity}`} aria-label={`Severidad: ${SEVERITY_LABEL[severity]}`}>
+        <div className={`severity severity-${severity}`} aria-label={`Alerta del modelo: ${SEVERITY_LABEL[severity]}`}>
           <span className="severity-dot" aria-hidden="true" />
           <span className="severity-label">{SEVERITY_LABEL[severity]}</span>
         </div>
+        <div className={`origin-badge origin-${result.origin}`} aria-label={`Origen de la predicción: ${result.origin === 'service' ? 'Servicio' : 'Demo'}`}>
+          {result.origin === 'service' ? 'Servicio' : 'Demo'}
+        </div>
 
         <div className="delay-metric">
+          <span className="delay-label">Duración estimada si se produce la demora:</span>
           <span className="delay-value tabular">
-            {isOnTime ? '0' : Math.round(delay.predicted_delay_minutes)}
+            {isOnTime ? '0' : Math.round(delay.minutos_retraso_estimados ?? delay.predicted_delay_minutes)}
           </span>
-          <span className="delay-unit">{isOnTime ? 'min de retraso' : 'min de retraso previsto'}</span>
+          <span className="delay-unit">min</span>
         </div>
 
         <div className="delay-confidence">
-          Confianza del modelo:{' '}
+          Probabilidad estimada de demora ≥15 min:{' '}
           <strong className="tabular">
-            {Math.round(delay.confidence * 100)}%
+            {typeof delay.prob_retraso === 'number' ? Math.round(delay.prob_retraso * 100) : '—'}%
           </strong>
+          {typeof delay.umbral_aplicado === 'number' && (
+            <span className="delay-confidence-sub">
+              {' '}
+              · umbral {Math.round(delay.umbral_aplicado * 100)}%
+            </span>
+          )}
         </div>
       </div>
 
@@ -134,8 +162,20 @@ function SuccessState({ result }: { result: PredictionResult }) {
 
       <FactorList factors={result.factors} />
 
+      <details className="interpretation-details">
+        <summary>Cómo se interpreta</summary>
+        <div className="interpretation-content">
+          {typeof delay.umbral_aplicado === 'number' && (
+            <div>Umbral del modelo: {Math.round(delay.umbral_aplicado * 100)}%</div>
+          )}
+          {delay.model_version && (
+            <div>Modelo: {delay.model_version}</div>
+          )}
+        </div>
+      </details>
+
       {delay.model_version && (
-        <p className="model-version tabular">Modelo v{delay.model_version}</p>
+        <p className="model-version tabular">Modelo: {delay.model_version}</p>
       )}
     </div>
   )
@@ -147,7 +187,7 @@ export default function ResultPanel({ state }: ResultPanelProps) {
       {state.kind === 'empty' && <EmptyState />}
       {state.kind === 'loading' && <LoadingState />}
       {state.kind === 'error' && <ErrorState message={state.message} />}
-      {state.kind === 'success' && <SuccessState result={state.result} />}
+      {state.kind === 'success' && <SuccessState result={state.result} flightSummary={state.flightSummary} />}
     </section>
   )
 }
