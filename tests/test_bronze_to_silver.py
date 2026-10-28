@@ -227,9 +227,11 @@ class TestMongoWrites:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A single Flight calls insert_many once with correct docs."""
+        """A single Flight calls bulk_write with ReplaceOne once with correct docs."""
         mock_collection = MagicMock()
-        mock_collection.insert_many.return_value = MagicMock(inserted_ids=["id1"])
+        mock_collection.bulk_write.return_value = MagicMock(
+            upserted_count=1, modified_count=0
+        )
 
         monkeypatch.setattr(
             "aeropredict.opensky.storage_silver._get_collection",
@@ -242,17 +244,24 @@ class TestMongoWrites:
         n = write_flights_silver([flight])
 
         assert n == 1
-        mock_collection.insert_many.assert_called_once()
-        args, _ = mock_collection.insert_many.call_args
-        docs = args[0]
-        assert len(docs) == 1
-        doc = docs[0]
-        assert doc["icao24"] == "abc123"
-        assert doc["callsign"] == "ABC123"
-        assert doc["est_departure_airport"] == "LEMD"
-        assert doc["est_arrival_airport"] == "LEBL"
-        assert "flight_date" in doc
-        assert "ingested_at" in doc
+        mock_collection.bulk_write.assert_called_once()
+        args, kwargs = mock_collection.bulk_write.call_args
+        ops = args[0]
+        assert len(ops) == 1
+        # Verify ReplaceOne filter and replacement contain expected fields
+        op = ops[0]
+        # ReplaceOne stores filter and replacement internally
+        filter_doc = getattr(op, "_filter", {})
+        replacement = getattr(op, "_doc", {})
+        assert filter_doc.get("icao24") == "abc123"
+        assert "first_seen" in filter_doc
+        assert replacement.get("icao24") == "abc123"
+        assert replacement.get("callsign") == "ABC123"
+        assert replacement.get("est_departure_airport") == "LEMD"
+        assert replacement.get("est_arrival_airport") == "LEBL"
+        assert "flight_date" in replacement
+        assert "ingested_at" in replacement
+        assert kwargs.get("ordered") is False
 
     def test_write_schema_compliance(self) -> None:
         """Inserted documents match the expected MongoDB schema."""
@@ -315,8 +324,11 @@ class TestMongoWrites:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Batch insert uses ordered=False to handle partial failures."""
+        """Batch write uses bulk_write with ordered=False to handle partial failures."""
         mock_collection = MagicMock()
+        mock_collection.bulk_write.return_value = MagicMock(
+            upserted_count=5, modified_count=0
+        )
         monkeypatch.setattr(
             "aeropredict.opensky.storage_silver._get_collection",
             lambda name: mock_collection,
@@ -327,8 +339,8 @@ class TestMongoWrites:
         flights = [_make_flight(icao24=f"abc{i}") for i in range(5)]
         write_flights_silver(flights)
 
-        mock_collection.insert_many.assert_called_once()
-        _kwargs = mock_collection.insert_many.call_args.kwargs
+        mock_collection.bulk_write.assert_called_once()
+        _kwargs = mock_collection.bulk_write.call_args.kwargs
         assert _kwargs.get("ordered") is False
 
 

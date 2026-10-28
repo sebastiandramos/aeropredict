@@ -49,9 +49,7 @@ class FakeConn:
         self.calls: list[tuple] = []  # (sql, rows, template, page_size)
         self.executed: list[str] = []  # SQL de cursor.execute (reconciles, etc.)
         self.commits = 0
-        self.metar_columns: list[str] = [
-            name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
-        ]
+        self.metar_columns: list[str] = [name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS]
         # Por defecto gold.notam ya tiene el unique key nuevo → reconcile no-op.
         self.notam_unique_indexes: list[tuple[str, str]] = [
             (
@@ -185,9 +183,7 @@ def test_write_metar_gold_inserts_rows(monkeypatch):
     assert "INSERT INTO gold.metar" in sql
     assert "ON CONFLICT (icao_id, obs_time) DO NOTHING" in sql
     assert page_size == 500
-    assert template == (
-        "(%s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    )
+    assert template == ("(%s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
     row = rows[0]
     assert row[0] == "LEMD"
     assert isinstance(row[1], str) and row[1].startswith("LEMD")
@@ -204,8 +200,13 @@ def test_write_metar_gold_defensive_on_bad_values(monkeypatch):
     conn = _patch_conn(monkeypatch)
     docs = [
         _metar_doc(
-            "LEMD", 1,
-            receipt_time="no-iso", temp="XX", relh="bad", wdir="abc", visib=9999,
+            "LEMD",
+            1,
+            receipt_time="no-iso",
+            temp="XX",
+            relh="bad",
+            wdir="abc",
+            visib=9999,
         ),
     ]
 
@@ -239,11 +240,7 @@ def test_write_metar_gold_skips_missing_icao_or_obs_time(monkeypatch):
 
 def _metar_columns_without(*missing: str) -> list[str]:
     """Columnas canónicas de gold.metar excluyendo las indicadas."""
-    return [
-        name
-        for name, _ in storage_gold.METAR_CANONICAL_COLUMNS
-        if name not in missing
-    ]
+    return [name for name, _ in storage_gold.METAR_CANONICAL_COLUMNS if name not in missing]
 
 
 def test_reconcile_metar_schema_adds_missing_columns(monkeypatch):
@@ -254,10 +251,7 @@ def test_reconcile_metar_schema_adds_missing_columns(monkeypatch):
 
     assert added == ["relh"]
     assert conn.executed[0] == storage_gold.METAR_COLUMNS_SQL
-    assert (
-        conn.executed[1]
-        == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
-    )
+    assert conn.executed[1] == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
 
 
 def test_reconcile_metar_schema_noop_when_complete(monkeypatch):
@@ -286,10 +280,7 @@ def test_write_metar_gold_alters_schema_before_insert(monkeypatch):
     n = storage_gold.write_metar_gold([_metar_doc("LEMD", 1722657600)])
 
     assert n == 1
-    assert (
-        conn.executed[1]
-        == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
-    )
+    assert conn.executed[1] == "ALTER TABLE gold.metar ADD COLUMN IF NOT EXISTS relh FLOAT"
     sql, _, _, _ = conn.calls[0]
     assert "INSERT INTO gold.metar" in sql
     assert "relh" in sql
@@ -522,7 +513,8 @@ def test_write_runways_gold_upserts(monkeypatch):
     assert conn.commits == 1
     sql, rows, _template, page_size = conn.calls[0]
     assert "INSERT INTO gold.runways" in sql
-    assert "ON CONFLICT (airport_ident, le_ident, he_ident) DO UPDATE SET" in sql
+    assert "ON CONFLICT (airport_ident, le_ident) DO UPDATE SET" in sql
+    assert "he_ident       = EXCLUDED.he_ident" in sql
     assert "length_ft      = EXCLUDED.length_ft" in sql
     assert page_size == 500
     row = rows[0]
@@ -547,10 +539,12 @@ def test_write_runways_gold_skips_missing_key_columns(monkeypatch):
 
     n = storage_gold.write_runways_gold(docs)
 
-    assert n == 1
+    # Only first two rows have airport_ident + le_ident; he_ident is now optional
+    assert n == 2
     _, rows, _, _ = conn.calls[0]
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0][0] == "LEMD"
+    assert rows[1][0] == "LEAL"
 
 
 # ------------------------------------------------------------------
@@ -679,8 +673,12 @@ def test_sync_entity_incremental_full_sync_is_paged_and_checkpointed(monkeypatch
     )
 
     total = entities._sync_entity_incremental(
-        mdb, "aena_infovuelos", {"_id": 1, "field": 1}, write_fn,
-        "aena_cursor", page_size=2,
+        mdb,
+        "aena_infovuelos",
+        {"_id": 1, "field": 1},
+        write_fn,
+        "aena_cursor",
+        page_size=2,
     )
 
     assert total == 5
@@ -694,19 +692,43 @@ def test_sync_entity_incremental_full_sync_is_paged_and_checkpointed(monkeypatch
     ]
 
 
-def test_prune_aena_history_uses_seven_day_cutoff():
+def test_prune_aena_history_uses_seven_day_cutoff(monkeypatch):
     class FakeDeleteResult:
         deleted_count = 3
 
     class FakeDeleteCollection:
+        def count_documents(self, query):
+            return 0
+
         def delete_many(self, query):
             self.query = query
             return FakeDeleteResult()
 
+    class FakeGoldCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql):
+            pass
+
+        def fetchone(self):
+            return (datetime(2026, 10, 20, tzinfo=UTC),)
+
+    class FakeGoldConn:
+        def cursor(self):
+            return FakeGoldCursor()
+
     collection = FakeDeleteCollection()
+    monkeypatch.setattr(entities, "get_gold_conn", lambda: FakeGoldConn())
     deleted = entities._prune_aena_history({"aena_infovuelos": collection})
 
-    cutoff = datetime.fromisoformat(collection.query["snapshot_at_utc"]["$lt"])
+    cutoff = datetime.fromisoformat(collection.query["$and"][0]["snapshot_at_utc"]["$lt"])
     now = datetime.now(UTC)
     assert deleted == 3
     assert now - timedelta(days=7, seconds=5) < cutoff < now - timedelta(days=7, seconds=-5)
+    # Solo borra snapshots ya sincronizados a Gold
+    assert "$and" in collection.query
+    assert collection.query["$and"][1]["snapshot_at_utc"]["$lte"] == "2026-10-20T00:00:00+00:00"

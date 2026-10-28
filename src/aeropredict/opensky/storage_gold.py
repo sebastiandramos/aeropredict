@@ -323,11 +323,11 @@ CREATE TABLE IF NOT EXISTS gold.runways (
     width_ft       FLOAT,
     surface        VARCHAR(32),
     le_ident       VARCHAR(8) NOT NULL,
-    he_ident       VARCHAR(8) NOT NULL,
+    he_ident       VARCHAR(8),
     le_heading_degT FLOAT,
     he_heading_degT FLOAT,
     ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (airport_ident, le_ident, he_ident)
+    PRIMARY KEY (airport_ident, le_ident)
 );
 
 CREATE INDEX IF NOT EXISTS idx_runways_surface ON gold.runways (surface);
@@ -642,7 +642,6 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
 
     # Agregar antes de insertar para evitar duplicados en ON CONFLICT
     daily_agg: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
-    route_agg: dict[tuple[str, str], list[int | str | None]] = {}
     hourly_agg: dict[tuple[str, str, int], list[int]] = defaultdict(lambda: [0, 0])
 
     for f in flights:
@@ -662,19 +661,6 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
             v = daily_agg[(arr, fd_str)]
             v[0] += 1  # arrivals_count
 
-        # route_density
-        if dep and arr:
-            key = (dep, arr)
-            if key in route_agg:
-                r = route_agg[key]
-                r[0] = int(r[0]) + 1  # type: ignore[arg-type]
-                if flight_date < r[1]:
-                    r[1] = flight_date
-                if flight_date > r[2]:
-                    r[2] = flight_date
-            else:
-                route_agg[key] = [1, flight_date, flight_date]
-
         # hourly_distribution
         if dep:
             v = hourly_agg[(dep, fd_str, hour)]
@@ -687,15 +673,15 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
     daily_rows: list[tuple[str, str, int, int]] = [
         (k[0], k[1], v[0], v[1]) for k, v in daily_agg.items()
     ]
-    route_rows: list[tuple[str, str, int, str, str]] = [
-        (k[0], k[1], v[0], v[1].isoformat(), v[2].isoformat())
-        for k, v in route_agg.items()
-    ]
     hourly_rows: list[tuple[str, str, int, int, int]] = [
         (k[0], k[1], k[2], v[0], v[1]) for k, v in hourly_agg.items()
     ]
 
-    counts: dict[str, int] = {}
+    counts: dict[str, int] = {
+        "daily_airport_traffic": 0,
+        "hourly_distribution": 0,
+        "route_density": 0,
+    }
 
     if daily_rows:
         with conn.cursor() as cur:
@@ -705,34 +691,14 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
                 (airport_code, flight_date, arrivals_count, departures_count)
                 VALUES %s
                 ON CONFLICT (airport_code, flight_date) DO UPDATE SET
-                    arrivals_count = gold.daily_airport_traffic.arrivals_count
-                        + EXCLUDED.arrivals_count,
-                    departures_count = gold.daily_airport_traffic.departures_count
-                        + EXCLUDED.departures_count,
+                    arrivals_count = EXCLUDED.arrivals_count,
+                    departures_count = EXCLUDED.departures_count,
                     updated_at = NOW()
                 """,
                 daily_rows,
                 template="(%s, %s::date, %s, %s)",
             )
             counts["daily_airport_traffic"] = len(daily_rows)
-
-    if route_rows:
-        with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """INSERT INTO gold.route_density
-                (departure_airport, arrival_airport, flight_count, first_seen, last_seen)
-                VALUES %s
-                ON CONFLICT (departure_airport, arrival_airport) DO UPDATE SET
-                    flight_count = gold.route_density.flight_count + EXCLUDED.flight_count,
-                    first_seen = LEAST(gold.route_density.first_seen, EXCLUDED.first_seen),
-                    last_seen = GREATEST(gold.route_density.last_seen, EXCLUDED.last_seen),
-                    updated_at = NOW()
-                """,
-                route_rows,
-                template="(%s, %s, %s, %s::date, %s::date)",
-            )
-            counts["route_density"] = len(route_rows)
 
     if hourly_rows:
         with conn.cursor() as cur:
@@ -742,10 +708,8 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
                 (airport_code, flight_date, hour, arrivals_count, departures_count)
                 VALUES %s
                 ON CONFLICT (airport_code, flight_date, hour) DO UPDATE SET
-                    arrivals_count = gold.hourly_distribution.arrivals_count
-                        + EXCLUDED.arrivals_count,
-                    departures_count = gold.hourly_distribution.departures_count
-                        + EXCLUDED.departures_count,
+                    arrivals_count = EXCLUDED.arrivals_count,
+                    departures_count = EXCLUDED.departures_count,
                     updated_at = NOW()
                 """,
                 hourly_rows,
@@ -753,13 +717,75 @@ def write_flights_gold(flights: list[Flight]) -> dict[str, int]:
             )
             counts["hourly_distribution"] = len(hourly_rows)
 
+    # route_density is rebuilt separately via rebuild_route_density
+    counts["route_density"] = 0
+
     logger.info("Gold: %s", counts)
     return counts
+
 
 
 # ===================================================================
 # Gold — entidades (sync desde MongoDB)
 # ===================================================================
+
+
+
+def rebuild_route_density(flights: list[Flight]) -> int:
+    """Rebuild gold.route_density from a complete flight list.
+
+    Aggregates routes in Python, truncates the table, and inserts fresh rows.
+    Idempotent by construction.
+
+    Args:
+        flights: Complete list of Flight objects.
+
+    Returns:
+        Number of route rows inserted.
+    """
+    if not flights:
+        return 0
+
+    route_agg: dict[tuple[str, str], list[int | str | None]] = {}
+    for f in flights:
+        flight_date = f.first_seen.date() if f.first_seen else None
+        if flight_date is None:
+            continue
+        dep = f.est_departure_airport
+        arr = f.est_arrival_airport
+        if not dep or not arr:
+            continue
+        key = (dep, arr)
+        if key in route_agg:
+            r = route_agg[key]
+            r[0] = int(r[0]) + 1
+            if flight_date < r[1]:
+                r[1] = flight_date
+            if flight_date > r[2]:
+                r[2] = flight_date
+        else:
+            route_agg[key] = [1, flight_date, flight_date]
+
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE gold.route_density")
+    rows = [
+        (k[0], k[1], v[0], v[1].isoformat(), v[2].isoformat())
+        for k, v in route_agg.items()
+    ]
+    if rows:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """INSERT INTO gold.route_density
+                (departure_airport, arrival_airport, flight_count, first_seen, last_seen)
+                VALUES %s
+                """,
+                rows,
+                template="(%s, %s, %s, %s::date, %s::date)",
+            )
+    logger.info("Gold route_density rebuilt: %d rows", len(rows))
+    return len(rows)
 
 
 def write_flights_gold_raw(flight_docs: list[dict[str, Any]]) -> int:
@@ -1407,7 +1433,7 @@ def write_runways_gold(runways: list[dict[str, Any]]) -> int:
 
     Los valores llegan como string desde el parser de OurAirports, por lo
     que las columnas numéricas se convierten con float() defensivo.
-    Se omite filas sin ``airport_ident``, ``le_ident`` o ``he_ident``.
+    Se omite filas sin ``airport_ident`` o ``le_ident``; ``he_ident`` es opcional.
 
     Args:
         runways: Lista de dicts desde MongoDB (colección runways).
@@ -1418,16 +1444,16 @@ def write_runways_gold(runways: list[dict[str, Any]]) -> int:
     if not runways:
         return 0
 
-    rows: list[tuple[Any, ...]] = []
+    rows_dict: dict[tuple[str, str], tuple[Any, ...]] = {}
     n_skipped = 0
     for doc in runways:
         airport_ident = _trunc(doc.get("airport_ident"), 8)
         le_ident = _trunc(doc.get("le_ident"), 8)
-        he_ident = _trunc(doc.get("he_ident"), 8)
-        if not airport_ident or not le_ident or not he_ident:
+        he_ident = _trunc(doc.get("he_ident"), 8) or None
+        if not airport_ident or not le_ident:
             n_skipped += 1
             continue
-        rows.append((
+        rows_dict[(airport_ident, le_ident)] = (
             airport_ident,
             _safe_float(doc.get("length_ft")),
             _safe_float(doc.get("width_ft")),
@@ -1436,11 +1462,13 @@ def write_runways_gold(runways: list[dict[str, Any]]) -> int:
             he_ident,
             _safe_float(doc.get("le_heading_degT")),
             _safe_float(doc.get("he_heading_degT")),
-        ))
+        )
+
+    rows = list(rows_dict.values())
 
     if n_skipped:
         logger.warning(
-            "Skipped %d runways rows missing airport_ident, le_ident or he_ident",
+            "Skipped %d runways rows missing airport_ident or le_ident",
             n_skipped,
         )
 
@@ -1452,10 +1480,11 @@ def write_runways_gold(runways: list[dict[str, Any]]) -> int:
             (airport_ident, length_ft, width_ft, surface,
              le_ident, he_ident, le_heading_degT, he_heading_degT)
             VALUES %s
-            ON CONFLICT (airport_ident, le_ident, he_ident) DO UPDATE SET
+            ON CONFLICT (airport_ident, le_ident) DO UPDATE SET
                 length_ft      = EXCLUDED.length_ft,
                 width_ft       = EXCLUDED.width_ft,
                 surface        = EXCLUDED.surface,
+                he_ident       = EXCLUDED.he_ident,
                 le_heading_degT = EXCLUDED.le_heading_degT,
                 he_heading_degT = EXCLUDED.he_heading_degT,
                 ingested_at    = NOW()

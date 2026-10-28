@@ -60,6 +60,8 @@ class FakeCollection:
 
     def bulk_write(self, ops, ordered=False):
         self.bulk_write_calls.append((list(ops), ordered))
+        if self._insert_many_error is not None:
+            raise self._insert_many_error
         upserted_count = 0
         modified_count = 0
         for op in ops:
@@ -331,10 +333,19 @@ def test_write_metar_inserts_docs_with_ingested_at(monkeypatch):
     fake = FakeCollection("metar")
     monkeypatch.setattr(storage_silver, "_get_metar_collection", lambda: fake)
 
-    _assert_inserted_with_ingested_at(storage_silver.write_metar, fake, [
+    docs = [
         {"icao_id": "LEMD", "raw_ob": "LEMD 010900Z"},
         {"icao_id": "LEBL", "raw_ob": "LEBL 010900Z"},
-    ])
+    ]
+    n = storage_silver.write_metar(docs)
+    assert n == len(docs)
+    assert len(fake.bulk_write_calls) == 1
+    ops, ordered = fake.bulk_write_calls[0]
+    assert ordered is False
+    assert len(ops) == len(docs)
+    # Verify ingested_at was set on docs
+    for doc in docs:
+        assert doc["ingested_at"] is not None
 
 
 def test_write_holidays_inserts_docs_with_ingested_at(monkeypatch):
