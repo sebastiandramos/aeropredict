@@ -32,6 +32,20 @@ logger = logging.getLogger(__name__)
 
 _BULK_CHUNK = 1000
 
+
+def _bulk_error_written(e: BulkWriteError) -> int:
+    """Extract number of successfully written docs from BulkWriteError."""
+    try:
+        details = e.details or {}
+        # Some drivers expose upserted_ids, insertedIds, etc.
+        upserted = details.get("upserted") or details.get("upsertedIds") or []
+        # Fallback to length of insertedIds
+        inserted = details.get("insertedIds") or []
+        return len(upserted) + len(inserted)
+    except Exception:
+        return 0
+
+
 # Conexión perezosa (se conecta en el primer uso)
 _client: pymongo.MongoClient[Any] | None = None
 _indexes_ensure = False
@@ -75,14 +89,18 @@ def _ensure_indexes() -> None:
 
     flights = db["flights"]
     flights.create_index("flight_date")
-    flights.create_index([
-        ("est_departure_airport", pymongo.ASCENDING),
-        ("flight_date", pymongo.ASCENDING),
-    ])
-    flights.create_index([
-        ("est_arrival_airport", pymongo.ASCENDING),
-        ("flight_date", pymongo.ASCENDING),
-    ])
+    flights.create_index(
+        [
+            ("est_departure_airport", pymongo.ASCENDING),
+            ("flight_date", pymongo.ASCENDING),
+        ]
+    )
+    flights.create_index(
+        [
+            ("est_arrival_airport", pymongo.ASCENDING),
+            ("flight_date", pymongo.ASCENDING),
+        ]
+    )
 
     sv = db["state_vectors"]
     sv.create_index("snapshot_date")
@@ -136,7 +154,9 @@ def _flight_to_doc(f: Flight) -> dict[str, Any]:
         "arrival_airport_vert_distance": f.est_arrival_airport_vert_distance,
         "departure_airport_candidates_count": f.departure_airport_candidates_count,
         "arrival_airport_candidates_count": f.arrival_airport_candidates_count,
-        "flight_date": datetime(flight_date.year, flight_date.month, flight_date.day, tzinfo=UTC) if flight_date else None,  # noqa: E501
+        "flight_date": datetime(flight_date.year, flight_date.month, flight_date.day, tzinfo=UTC)
+        if flight_date
+        else None,  # noqa: E501
         "ingested_at": datetime.now(UTC),
     }
 
@@ -156,12 +176,24 @@ def write_flights_silver(flights: list[Flight]) -> int:
     col = _get_collection("flights")
     docs = [_flight_to_doc(f) for f in flights]
 
-    try:
-        result = col.insert_many(docs, ordered=False)
-        n = len(result.inserted_ids)
-    except BulkWriteError as e:
-        # ordered=False inserta los que puede; los duplicados se saltan
-        n = len(e.details.get("insertedIds", [])) if e.details else 0
+    n = 0
+    ops: list[ReplaceOne] = []
+    for doc in docs:
+        filter_doc = {"icao24": doc["icao24"], "first_seen": doc["first_seen"]}
+        ops.append(ReplaceOne(filter_doc, doc, upsert=True))
+        if len(ops) >= _BULK_CHUNK:
+            try:
+                result = col.bulk_write(ops, ordered=False)
+                n += result.upserted_count + result.modified_count
+            except BulkWriteError as e:
+                n += len(e.details.get("upserted", [])) if e.details else 0
+            ops = []
+    if ops:
+        try:
+            result = col.bulk_write(ops, ordered=False)
+            n += result.upserted_count + result.modified_count
+        except BulkWriteError as e:
+            n += len(e.details.get("upserted", [])) if e.details else 0
 
     logger.info("Silver (MongoDB): %d vuelos insertados", n)
     return n
@@ -229,20 +261,22 @@ def _track_waypoint_to_docs(t: Track) -> list[dict[str, Any]]:
     track_date = t.start_time.date() if t.start_time else None
     docs = []
     for wp in t.path:
-        docs.append({
-            "icao24": t.icao24,
-            "callsign": t.callsign,
-            "start_time": t.start_time,
-            "end_time": t.end_time,
-            "waypoint_time": wp.time,
-            "latitude": wp.latitude,
-            "longitude": wp.longitude,
-            "baro_altitude": wp.baro_altitude,
-            "true_track": wp.true_track,
-            "on_ground": wp.on_ground,
-            "track_date": track_date,
-            "ingested_at": datetime.now(UTC),
-        })
+        docs.append(
+            {
+                "icao24": t.icao24,
+                "callsign": t.callsign,
+                "start_time": t.start_time,
+                "end_time": t.end_time,
+                "waypoint_time": wp.time,
+                "latitude": wp.latitude,
+                "longitude": wp.longitude,
+                "baro_altitude": wp.baro_altitude,
+                "true_track": wp.true_track,
+                "on_ground": wp.on_ground,
+                "track_date": track_date,
+                "ingested_at": datetime.now(UTC),
+            }
+        )
     return docs
 
 
@@ -280,14 +314,18 @@ def _get_schedule_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _schedule_indexes_ensure:
         col = db["schedules"]
-        col.create_index([
-            ("callsign", pymongo.ASCENDING),
-            ("flight_date", pymongo.ASCENDING),
-        ])
-        col.create_index([
-            ("source", pymongo.ASCENDING),
-            ("fetched_at", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("callsign", pymongo.ASCENDING),
+                ("flight_date", pymongo.ASCENDING),
+            ]
+        )
+        col.create_index(
+            [
+                ("source", pymongo.ASCENDING),
+                ("fetched_at", pymongo.ASCENDING),
+            ]
+        )
         _schedule_indexes_ensure = True
     return db["schedules"]
 
@@ -372,10 +410,12 @@ def _get_weather_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _weather_indexes_ensure:
         col = db["weather"]
-        col.create_index([
-            ("airport_code", pymongo.ASCENDING),
-            ("flight_date", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("airport_code", pymongo.ASCENDING),
+                ("flight_date", pymongo.ASCENDING),
+            ]
+        )
         col.create_index("fetched_at")
         _weather_indexes_ensure = True
     return db["weather"]
@@ -435,11 +475,13 @@ def _get_aena_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _aena_indexes_ensure:
         col = db["aena_infovuelos"]
-        col.create_index([
-            ("snapshot_at_utc", pymongo.ASCENDING),
-            ("flight_number", pymongo.ASCENDING),
-            ("aena_airport_iata", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("snapshot_at_utc", pymongo.ASCENDING),
+                ("flight_number", pymongo.ASCENDING),
+                ("aena_airport_iata", pymongo.ASCENDING),
+            ]
+        )
         _aena_indexes_ensure = True
     return db["aena_infovuelos"]
 
@@ -459,11 +501,32 @@ def write_aena_infovuelos(docs: list[dict[str, Any]]) -> int:
     now = datetime.now(UTC)
     for doc in docs:
         doc.setdefault("ingested_at", now)
-    try:
-        result = col.insert_many(docs, ordered=False)
-        n = len(result.inserted_ids)
-    except BulkWriteError as e:
-        n = len(e.details.get("insertedIds", [])) if e.details else 0
+
+    n = 0
+    ops: list[ReplaceOne] = []
+    for doc in docs:
+        filter_doc = {
+            "snapshot_at_utc": doc.get("snapshot_at_utc"),
+            "flight_number": doc.get("flight_number"),
+            "aena_airport_iata": doc.get("aena_airport_iata"),
+            "flight_type": doc.get("flight_type"),
+            "scheduled_local": doc.get("scheduled_local"),
+        }
+        ops.append(ReplaceOne(filter_doc, doc, upsert=True))
+        if len(ops) >= _BULK_CHUNK:
+            try:
+                result = col.bulk_write(ops, ordered=False)
+                n += result.upserted_count + result.modified_count
+            except BulkWriteError as e:
+                n += len(e.details.get("upserted", [])) if e.details else 0
+            ops = []
+    if ops:
+        try:
+            result = col.bulk_write(ops, ordered=False)
+            n += result.upserted_count + result.modified_count
+        except BulkWriteError as e:
+            n += len(e.details.get("upserted", [])) if e.details else 0
+
     logger.info("Silver (MongoDB): %d AENA infovuelos insertados", n)
     return n
 
@@ -588,10 +651,12 @@ def _get_metar_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _metar_indexes_ensure:
         col = db["metar"]
-        col.create_index([
-            ("icao_id", pymongo.ASCENDING),
-            ("obs_time", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("icao_id", pymongo.ASCENDING),
+                ("obs_time", pymongo.ASCENDING),
+            ]
+        )
         _metar_indexes_ensure = True
     return db["metar"]
 
@@ -611,11 +676,26 @@ def write_metar(metar_reports: list[dict[str, Any]]) -> int:
     now = datetime.now(UTC)
     for doc in metar_reports:
         doc.setdefault("ingested_at", now)
-    try:
-        result = col.insert_many(metar_reports, ordered=False)
-        n = len(result.inserted_ids)
-    except BulkWriteError as e:
-        n = len(e.details.get("insertedIds", [])) if e.details else 0
+
+    n = 0
+    ops: list[ReplaceOne] = []
+    for doc in metar_reports:
+        filter_doc = {"icao_id": doc.get("icao_id"), "obs_time": doc.get("obs_time")}
+        ops.append(ReplaceOne(filter_doc, doc, upsert=True))
+        if len(ops) >= _BULK_CHUNK:
+            try:
+                result = col.bulk_write(ops, ordered=False)
+                n += result.upserted_count + result.modified_count
+            except BulkWriteError as e:
+                n += _bulk_error_written(e)
+            ops = []
+    if ops:
+        try:
+            result = col.bulk_write(ops, ordered=False)
+            n += result.upserted_count + result.modified_count
+        except BulkWriteError as e:
+            n += _bulk_error_written(e)
+
     logger.info("Silver (MongoDB): %d METAR insertados", n)
     return n
 
@@ -633,11 +713,13 @@ def _get_holidays_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _holidays_indexes_ensure:
         col = db["holidays"]
-        col.create_index([
-            ("date", pymongo.ASCENDING),
-            ("name", pymongo.ASCENDING),
-            ("source", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("date", pymongo.ASCENDING),
+                ("name", pymongo.ASCENDING),
+                ("source", pymongo.ASCENDING),
+            ]
+        )
         _holidays_indexes_ensure = True
     return db["holidays"]
 
@@ -679,10 +761,12 @@ def _get_eurocontrol_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _eurocontrol_indexes_ensure:
         col = db["eurocontrol_pru"]
-        col.create_index([
-            ("source_file", pymongo.ASCENDING),
-            ("year", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("source_file", pymongo.ASCENDING),
+                ("year", pymongo.ASCENDING),
+            ]
+        )
         _eurocontrol_indexes_ensure = True
     return db["eurocontrol_pru"]
 
@@ -724,10 +808,12 @@ def _get_notam_collection() -> Collection[Any]:
     db = _client.get_database()
     if not _notam_indexes_ensure:
         col = db["notam"]
-        col.create_index([
-            ("snapshot_at", pymongo.ASCENDING),
-            ("layer", pymongo.ASCENDING),
-        ])
+        col.create_index(
+            [
+                ("snapshot_at", pymongo.ASCENDING),
+                ("layer", pymongo.ASCENDING),
+            ]
+        )
         _notam_indexes_ensure = True
     return db["notam"]
 

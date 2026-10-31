@@ -22,6 +22,8 @@ build_feature_store.py→ PostgreSQL gold.feature_store (ML features)
 
 `silver_to_gold_entities.py` auto-reconcilia el unique key de `gold.aena_infovuelos` (5 columnas, incl. `scheduled_local`) al sincronizar AENA: si el constraint vigente es el antiguo de 4 columnas, migra automáticamente una vez por proceso. Fallback manual: `python scripts/migrate_aena_gold_unique.py --apply`.
 
+`gold.runways` ahora usa PK `(airport_ident, le_ident)` con `he_ident` nullable. Migración: `python scripts/migrate_runways_null_he_ident.py --apply`. `write_runways_gold` deduplica por `(airport_ident, le_ident)` y acepta filas sin `he_ident`.
+
 La colección `aena_infovuelos` de Atlas conserva solo 7 días operativos: `silver_to_gold_entities.py` la recorta después de sincronizar a Gold. El histórico completo se conserva en `gold.aena_infovuelos` y Bronze de R2.
 
 **Data collectors**: the 5 keyless collectors run inside the `extract` job of `.github/workflows/pipeline.yml` (06:30/19:30 UTC) with `continue-on-error: true` (failure isolation); OpenSky is critical (no `continue-on-error`) and Open-Meteo weather also uses `continue-on-error`. Their data now flows Bronze → Silver (MongoDB) → Gold (PostgreSQL): `bronze_to_silver.py` promotes each Bronze table to Mongo (per-source checkpoints), `silver_to_gold_entities.py` syncs the collections to Gold (full sync, upsert/`ON CONFLICT`):

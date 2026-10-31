@@ -676,9 +676,9 @@ class TestAenaSilverWrite:
         assert write_aena_infovuelos([]) == 0
 
     def test_write_inserts_many_ordered_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A non-empty list inserts with ordered=False and adds ingested_at."""
+        """A non-empty list upserts with bulk_write ordered=False and adds ingested_at."""
         mock_collection = MagicMock()
-        mock_collection.insert_many.return_value = MagicMock(inserted_ids=["id1", "id2"])
+        mock_collection.bulk_write.return_value = MagicMock(upserted_count=2, modified_count=0)
         monkeypatch.setattr(
             "aeropredict.opensky.storage_silver._get_aena_collection",
             lambda: mock_collection,
@@ -690,7 +690,7 @@ class TestAenaSilverWrite:
         n = write_aena_infovuelos(docs)
 
         assert n == 2
-        mock_collection.insert_many.assert_called_once()
-        assert mock_collection.insert_many.call_args.kwargs.get("ordered") is False
+        mock_collection.bulk_write.assert_called_once()
+        assert mock_collection.bulk_write.call_args.kwargs.get("ordered") is False
         for doc in docs:
             assert "ingested_at" in doc
