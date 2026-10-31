@@ -37,8 +37,8 @@ jobs:
       - name: Build
         working-directory: web
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_USE_MOCK: ${{ secrets.VITE_USE_MOCK || 'false' }}
+          VITE_API_BASE_URL: https://aeropredict-bvoq.onrender.com
+          VITE_USE_MOCK: false
         run: npm run build
 
       - name: Upload artifact
