@@ -156,7 +156,7 @@ def _flight_to_doc(f: Flight) -> dict[str, Any]:
         "arrival_airport_candidates_count": f.arrival_airport_candidates_count,
         "flight_date": datetime(flight_date.year, flight_date.month, flight_date.day, tzinfo=UTC)
         if flight_date
-        else None,  # noqa: E501
+        else None,
         "ingested_at": datetime.now(UTC),
     }
 
