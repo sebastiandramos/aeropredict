@@ -239,6 +239,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS - permite llamadas desde GitHub Pages / frontend
+from fastapi.middleware.cors import CORSMiddleware
+origins = os.getenv("CORS_ORIGINS","*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Rate limiter en memoria para /predict*: ventana deslizante de 60s por IP.
