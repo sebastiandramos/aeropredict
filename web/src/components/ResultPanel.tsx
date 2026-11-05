@@ -122,12 +122,14 @@ function SuccessState({ result, flightSummary }: { result: PredictionResult; fli
           <strong className="tabular">
             {typeof delay.prob_retraso === 'number' ? Math.round(delay.prob_retraso * 100) : '—'}%
           </strong>
-          {typeof delay.umbral_aplicado === 'number' && (
-            <span className="delay-confidence-sub">
-              {' '}
-              · umbral {Math.round(delay.umbral_aplicado * 100)}%
-            </span>
-          )}
+        </div>
+
+        {/* TODO: Mostrar umbral real del backend. Actualmente fijo a 10% para fase demo. Reemplazar por:
+            {typeof delay.umbral_aplicado === 'number' ? Math.round(delay.umbral_aplicado * 100) : 10}%
+        */}
+        <div className="delay-threshold">
+          Umbral de clasificación:{' '}
+          <strong className="tabular">10%</strong>
         </div>
       </div>
 
@@ -165,9 +167,6 @@ function SuccessState({ result, flightSummary }: { result: PredictionResult; fli
       <details className="interpretation-details">
         <summary>Cómo se interpreta</summary>
         <div className="interpretation-content">
-          {typeof delay.umbral_aplicado === 'number' && (
-            <div>Umbral del modelo: {Math.round(delay.umbral_aplicado * 100)}%</div>
-          )}
           {delay.model_version && (
             <div>Modelo: {delay.model_version}</div>
           )}

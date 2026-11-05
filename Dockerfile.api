@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Dependencias de sistema para psycopg2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copiar metadata del proyecto primero para cachear pip
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# Instalar proyecto con extras api + ml
+RUN pip install --no-cache-dir -e ".[api,ml]"
+
+EXPOSE 8000
+
+CMD ["uvicorn", "aeropredict.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
