@@ -124,12 +124,12 @@ function SuccessState({ result, flightSummary }: { result: PredictionResult; fli
           </strong>
         </div>
 
-        {/* TODO: Mostrar umbral real del backend. Actualmente fijo a 15% para fase demo. Reemplazar por:
-            {typeof delay.umbral_aplicado === 'number' ? Math.round(delay.umbral_aplicado * 100) : 15}%
+        {/* TODO: Mostrar umbral real del backend. Actualmente fijo a 10% para fase demo. Reemplazar por:
+            {typeof delay.umbral_aplicado === 'number' ? Math.round(delay.umbral_aplicado * 100) : 10}%
         */}
         <div className="delay-threshold">
           Umbral de clasificación:{' '}
-          <strong className="tabular">15%</strong>
+          <strong className="tabular">10%</strong>
         </div>
       </div>
 
