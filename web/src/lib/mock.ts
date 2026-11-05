@@ -88,7 +88,7 @@ export function mockDelay(features: DelayFeatures): DelayResponse {
     prob_retraso: probability,
     prediccion_retraso_15min: delayed,
     minutos_retraso_estimados: delayed ? minutes : 0,
-    umbral_aplicado: 0.10,
+    umbral_aplicado: 0.15,
     factores: [
       {
         id: 'hour_peak',
